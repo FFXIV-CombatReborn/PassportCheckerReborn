@@ -1,4 +1,10 @@
-# Passport Checker Reborn
+# [![](https://raw.githubusercontent.com/FFXIV-CombatReborn/RebornAssets/main/IconAssets/PCR_Icon.png)](https://github.com/FFXIV-CombatReborn/PassportCheckerReborn)
+
+**Passport Checker Reborn**
+
+![Github Latest Releases](https://img.shields.io/github/downloads/FFXIV-CombatReborn/PassportCheckerReborn/latest/total.svg?style=for-the-badge)
+![Github License](https://img.shields.io/github/license/FFXIV-CombatReborn/PassportCheckerReborn.svg?label=License&style=for-the-badge)
+[![](https://dcbadge.limes.pink/api/server/p54TZMPnC9)](https://discord.gg/p54TZMPnC9)
 
 An open-source Party Finder enhancement plugin for Final Fantasy XIV, built on the [Dalamud](https://github.com/goatcorp/Dalamud) plugin framework. Passport Checker Reborn shows a member-info overlay alongside Party Finder listings and integrates with [FFLogs](https://www.fflogs.com/) and [Tomestone.gg](https://tomestone.gg/) for quick player lookup.
 
