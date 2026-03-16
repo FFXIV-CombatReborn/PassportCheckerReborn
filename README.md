@@ -34,13 +34,17 @@ An open-source Party Finder enhancement plugin for Final Fantasy XIV, built on t
 | Command | Description |
 |---|---|
 | `/pfchecker` | Toggle the main plugin window |
-| `/pfcheckersettings` | Open the settings window |
 
 ## Installation
 
-1. Install [FFXIV Quick Launcher](https://goatcorp.github.io/faq/xl_troubleshooting) and enable Dalamud.
-2. Add the Combat Reborn plugin repository to your Dalamud settings.
-3. Search for **Passport Checker Reborn** in the plugin installer and click Install.
+- Enter `/xlsettings` in the chat window and go to the Experimental tab in the opening window.
+- **Skip below the DevPlugins section to the Custom Plugin Repositories section.**
+- Copy and paste the repo.json link into the first free text input field.
+```
+https://raw.githubusercontent.com/FFXIV-CombatReborn/CombatRebornRepo/main/pluginmaster.json
+```
+- Click on the + button and make sure the checkmark beside the new field is set afterwards.
+- **Click on the Save-icon in the bottom right.**
 
 ## Configuration
 
