@@ -219,7 +219,7 @@ public sealed class PartyFinderManager : IDisposable
         }
 
         // ── Context menu (right-click → "View Recruitment") ─────────────────
-        if (plugin.Configuration.RightClickPlayerNameForRecruitment)
+        if (plugin.Configuration.RightClickPlayerNameForRecruitment2)
             RegisterContextMenu();
     }
 
@@ -606,8 +606,7 @@ public sealed class PartyFinderManager : IDisposable
         {
             PassportCheckerReborn.Log.Information(
                 $"[PartyFinderManager] View Recruitment requested for ContentId {target.TargetContentId}");
-            PassportCheckerReborn.ChatGui.Print(
-                $"[PassportChecker] Looking up recruitment for player (ContentId: {target.TargetContentId})…");
+            //TODO: Need to finish this, gotta make it open the party finder the is in
         }
     }
 
