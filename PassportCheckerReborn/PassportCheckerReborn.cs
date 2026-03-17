@@ -32,6 +32,7 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
     internal const string Version = "0.1.0";
 
     private const string CommandName = "/pfchecker";
+    public const string ALTCOMMAND = "/pcr";
 
     public Configuration Configuration { get; init; }
 
@@ -64,6 +65,10 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
         {
             HelpMessage = "Open Passport Check Reborn menu."
         });
+        CommandManager.AddHandler(ALTCOMMAND, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Open Passport Check Reborn menu."
+        });
 
         PluginInterface.UiBuilder.Draw += ManageWindowStates;
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
@@ -89,6 +94,7 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
         FFLogsService.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+        CommandManager.RemoveHandler(ALTCOMMAND);
     }
 
     private void OnCommand(string command, string args)
