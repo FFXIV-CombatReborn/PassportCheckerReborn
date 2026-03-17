@@ -510,7 +510,7 @@ public class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        ImGui.TextWrapped("Source code: https://github.com/FFXIV-CombatReborn/Passport-Checker-Reborn");
+        ImGui.TextWrapped("Source code: https://github.com/FFXIV-CombatReborn/PassportCheckerReborn");
         ImGui.Spacing();
 
         ImGui.TextWrapped("Tomestone.gg integration inspired by the TomestoneGG Dalamud plugin.");

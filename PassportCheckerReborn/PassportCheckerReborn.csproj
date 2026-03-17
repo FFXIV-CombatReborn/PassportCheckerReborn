@@ -43,4 +43,16 @@
 	<Using Include="Newtonsoft.Json" />
   </ItemGroup>
 
+    <!-- Prune unwanted DLLs from output -->
+    <Target Name="PruneOutputDlls" AfterTargets="ResolveReferences">
+        <ItemGroup>
+            <!-- Keep only these DLLs in the copy-local list -->
+            <_KeepDlls Include="@(ReferenceCopyLocalPaths)" Condition="&#xD;&#xA;	'%(Filename)' == 'PassportCheckerReborn' or&#xD;&#xA;	'%(Filename)' == 'ECommons'&#xD;&#xA;				" />
+            <!-- Remove everything else -->
+            <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="!('%(Filename)' == 'PassportCheckerReborn' or '%(Filename)' == 'RotationSolver.Basic' or '%(Filename)' == 'ECommons')" />
+            <!-- Re-add only the kept set -->
+            <ReferenceCopyLocalPaths Include="@(_KeepDlls)" />
+        </ItemGroup>
+    </Target>
+
 </Project>
