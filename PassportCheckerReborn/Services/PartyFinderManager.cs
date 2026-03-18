@@ -99,11 +99,11 @@ public sealed class PartyFinderManager : IDisposable
     // ── PF Listing cache (from IPartyFinderGui.ReceiveListing) ──────────────
     /// <summary>
     /// Cache of player info collected from PF listing packets.
-    /// Maps ContentId → (Name, HomeWorldId) for PF listing hosts.
+    /// Maps ContentId → (Name, HomeWorldId, ListingId) for PF listing hosts.
     /// Populated via <see cref="IPartyFinderGui.ReceiveListing"/> events,
     /// following the same pattern as OpenRadar's Network.ListingHostExtract.
     /// </summary>
-    private readonly ConcurrentDictionary<ulong, (string Name, ushort WorldId)> pfListingPlayerCache = new();
+    private readonly ConcurrentDictionary<ulong, (string Name, ushort WorldId, uint ListingId)> pfListingPlayerCache = new();
 
     // ── PopulateListingData hook (extracts member content IDs from PF detail) ─
     /// <summary>
@@ -150,6 +150,13 @@ public sealed class PartyFinderManager : IDisposable
 
     /// <summary>Prefix used for members whose names could not be resolved from cache.</summary>
     private const string UnresolvedNamePrefix = "Player ";
+
+    // ── Context-menu "View Recruitment" pending selection ─────────────────
+    /// <summary>
+    /// When non-zero, the content ID of a player whose PF listing should be
+    /// auto-selected once the LookingForGroup addon is ready.
+    /// </summary>
+    private ulong pendingRecruitmentContentId;
 
     // ── Context-menu entry ───────────────────────────────────────────────────
     public PartyFinderManager(PassportCheckerReborn plugin)
@@ -219,7 +226,7 @@ public sealed class PartyFinderManager : IDisposable
         }
 
         // ── Context menu (right-click → "View Recruitment") ─────────────────
-        if (plugin.Configuration.RightClickPlayerNameForRecruitment2)
+        if (plugin.Configuration.RightClickPlayerNameForRecruitment3)
             RegisterContextMenu();
     }
 
@@ -239,7 +246,8 @@ public sealed class PartyFinderManager : IDisposable
 
         var name = listing.Name.TextValue;
         var worldId = (ushort)listing.HomeWorld.RowId;
-        pfListingPlayerCache[listing.ContentId] = (name, worldId);
+        var listingId = listing.Id;
+        pfListingPlayerCache[listing.ContentId] = (name, worldId, listingId);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -409,7 +417,8 @@ public sealed class PartyFinderManager : IDisposable
                     var worldName = worldSheet?.GetRowOrDefault(resolved.WorldId)?.Name.ToString() ?? string.Empty;
 
                     // Update the PF listing cache so future lookups are instant
-                    pfListingPlayerCache[member.ContentId] = (resolved.Name, resolved.WorldId);
+                    var existingListingId = pfListingPlayerCache.TryGetValue(member.ContentId, out var prev) ? prev.ListingId : 0u;
+                    pfListingPlayerCache[member.ContentId] = (resolved.Name, resolved.WorldId, existingListingId);
 
                     // Update the member in-place (the overlay re-reads CurrentMembers each frame)
                     if (i < currentMembers.Count && currentMembers[i].ContentId == member.ContentId)
@@ -491,15 +500,18 @@ public sealed class PartyFinderManager : IDisposable
     {
         IsListOpen = true;
         StartAutoRefreshTimer();
+        TryProcessPendingRecruitment();
     }
 
     private void OnPFListRefresh(AddonEvent type, AddonArgs args)
     {
+        TryProcessPendingRecruitment();
     }
 
     private void OnPFListFinalize(AddonEvent type, AddonArgs args)
     {
         IsListOpen = false;
+        pendingRecruitmentContentId = 0;
         StopAutoRefreshTimer();
     }
 
@@ -600,13 +612,126 @@ public sealed class PartyFinderManager : IDisposable
         });
     }
 
-    private void OnViewRecruitmentClicked(Dalamud.Game.Gui.ContextMenu.IMenuItemClickedArgs args)
+    private unsafe void OnViewRecruitmentClicked(Dalamud.Game.Gui.ContextMenu.IMenuItemClickedArgs args)
     {
-        if (args.Target is Dalamud.Game.Gui.ContextMenu.MenuTargetDefault target)
+        if (args.Target is not Dalamud.Game.Gui.ContextMenu.MenuTargetDefault target)
+            return;
+
+        var contentId = target.TargetContentId;
+        PassportCheckerReborn.Log.Information(
+            $"[PartyFinderManager] View Recruitment requested for ContentId {contentId:X16}");
+
+        // Check if this player has a known PF listing
+        if (!pfListingPlayerCache.TryGetValue(contentId, out var cached) || cached.ListingId == 0)
         {
+            PassportCheckerReborn.ChatGui.Print(
+                "[PassportChecker] No active Party Finder listing found for this player.");
+            return;
+        }
+
+        // Store the pending selection
+        pendingRecruitmentContentId = contentId;
+
+        PassportCheckerReborn.Framework.RunOnFrameworkThread(() =>
+        {
+            try
+            {
+                var agent = AgentLookingForGroup.Instance();
+                if (agent == null)
+                {
+                    PassportCheckerReborn.ChatGui.Print(
+                        "[PassportChecker] Unable to open Party Finder.");
+                    pendingRecruitmentContentId = 0;
+                    return;
+                }
+
+                // If PF is already open, try to select the listing immediately
+                if (IsListOpen)
+                {
+                    // Request a refresh first so the listing data is current
+                    agent->RequestListingsUpdate();
+                    // Selection will be attempted in OnPFListRefresh via TryProcessPendingRecruitment
+                }
+                else
+                {
+                    // Open the PF window; selection will be attempted in OnPFListSetup
+                    agent->Show();
+                }
+            }
+            catch (Exception ex)
+            {
+                PassportCheckerReborn.Log.Warning(ex, "[PartyFinderManager] View Recruitment failed.");
+                pendingRecruitmentContentId = 0;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Attempts to process a pending "View Recruitment" selection by finding
+    /// the matching listing in the currently displayed PF list and selecting it.
+    /// Called from PF list setup/refresh handlers.
+    /// </summary>
+    private unsafe void TryProcessPendingRecruitment()
+    {
+        var targetContentId = pendingRecruitmentContentId;
+        if (targetContentId == 0)
+            return;
+
+        // Only attempt once per click
+        pendingRecruitmentContentId = 0;
+
+        if (!pfListingPlayerCache.TryGetValue(targetContentId, out var cached) || cached.ListingId == 0)
+            return;
+
+        var targetListingId = cached.ListingId;
+
+        try
+        {
+            var agent = AgentLookingForGroup.Instance();
+            if (agent == null)
+                return;
+
+            // Scan the agent's displayed listing IDs to find the target
+            var listingIds = agent->Listings.ListingIds;
+            var foundIndex = -1;
+            for (var i = 0; i < listingIds.Length; i++)
+            {
+                if (listingIds[i] == targetListingId)
+                {
+                    foundIndex = i;
+                    break;
+                }
+            }
+
+            if (foundIndex < 0)
+            {
+                PassportCheckerReborn.ChatGui.Print(
+                    $"[PassportChecker] Listing by {cached.Name} not found on the current page. " +
+                    "It may have expired or be on a different category/page.");
+                return;
+            }
+
+            // Fire a callback on the LookingForGroup addon to select this listing row.
+            // The addon's callback handler expects: [0] = 3 (select listing action), [1] = listing index.
+            var addonPtr = PassportCheckerReborn.GameGui.GetAddonByName("LookingForGroup");
+            if (addonPtr.IsNull)
+                return;
+
+            var addon = (AtkUnitBase*)addonPtr.Address;
+            var atkValues = stackalloc AtkValue[2];
+            atkValues[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+            atkValues[0].Int = 3;
+            atkValues[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+            atkValues[1].Int = foundIndex;
+            addon->FireCallback(2, atkValues);
+
             PassportCheckerReborn.Log.Information(
-                $"[PartyFinderManager] View Recruitment requested for ContentId {target.TargetContentId}");
-            //TODO: Need to finish this, gotta make it open the party finder the is in
+                $"[PartyFinderManager] Selected listing {targetListingId} by {cached.Name} at index {foundIndex}.");
+        }
+        catch (Exception ex)
+        {
+            PassportCheckerReborn.Log.Warning(ex,
+                "[PartyFinderManager] Failed to select listing for View Recruitment.");
         }
     }
 
