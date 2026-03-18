@@ -436,16 +436,16 @@ public sealed partial class TomestoneService : IDisposable
             var url = $"{ApiBaseUrl}/character/profile/{lodestoneId}?update=false";
 
             using var request = CreateAuthenticatedRequest(url);
-            PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
-            PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile status: {(int)response.StatusCode} {response.StatusCode}");
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
             var json = await response.Content.ReadAsStringAsync();
-            PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile response: {json}");
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile response: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
