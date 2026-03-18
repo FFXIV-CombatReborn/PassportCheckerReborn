@@ -158,7 +158,7 @@ public sealed class PartyFinderManager : IDisposable
     private const int CharaCardThrottleMs = 900;
 
     /// <summary>Prefix used for members whose names could not be resolved from cache.</summary>
-    private const string UnresolvedNamePrefix = "Player ";
+    public const string UnresolvedNamePrefix = "Player ";
 
     // ── Context-menu "View Recruitment" pending selection ─────────────────
     /// <summary>

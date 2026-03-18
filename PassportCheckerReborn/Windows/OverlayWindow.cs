@@ -292,8 +292,11 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
             }
         }
 
-        // Player label (names and CIDs are hidden in the PF overlay)
-        var displayName = $"Player {index + 1}";
+        // Player label
+        var isResolved = !member.Name.StartsWith(Services.PartyFinderManager.UnresolvedNamePrefix);
+        var displayName = cfg.ShowResolvedPlayerNames && isResolved
+            ? $"{member.Name}@{member.World}"
+            : $"Player {index + 1}";
 
         if (isKnown)
             ImGui.TextColored(cfg.KnownPlayerBorderColor, displayName);
