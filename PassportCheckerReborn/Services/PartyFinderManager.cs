@@ -12,6 +12,7 @@ using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Arrays;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
@@ -96,6 +97,14 @@ public sealed class PartyFinderManager : IDisposable
     /// </summary>
     public ConcurrentDictionary<string, bool> KnownPlayers { get; } = new();
 
+    // ── Blacklist cache ───────────────────────────────────────────────────────
+    /// <summary>
+    /// Set of "Name@World" strings read from the game's BlackList addon (node #9).
+    /// Refreshed whenever the BlackList addon is opened/refreshed, and also when
+    /// a PF detail pane is opened.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, bool> blacklistedPlayers = new(StringComparer.OrdinalIgnoreCase);
+
     // ── PF Listing cache (from IPartyFinderGui.ReceiveListing) ──────────────
     /// <summary>
     /// Cache of player info collected from PF listing packets.
@@ -163,6 +172,15 @@ public sealed class PartyFinderManager : IDisposable
     {
         this.plugin = plugin;
         RegisterHooks();
+
+        // Seed the in-memory dict from the persisted JSON cache so the blacklist
+        // is ready immediately, before the BlackList addon has been opened.
+        SeedBlacklistFromCache();
+
+        // Eagerly read the live string array – it's always in memory even without
+        // the BlackList addon being open, so this should succeed straight away and
+        // will overwrite the cache seed with the current game state.
+        ReadBlacklistFromAddon();
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -186,6 +204,12 @@ public sealed class PartyFinderManager : IDisposable
             AddonEvent.PostRefresh, "LookingForGroup", OnPFListRefresh);
         PassportCheckerReborn.AddonLifecycle.RegisterListener(
             AddonEvent.PreFinalize, "LookingForGroup", OnPFListFinalize);
+
+        // ── BlackList addon ──────────────────────────────────────────────────
+        PassportCheckerReborn.AddonLifecycle.RegisterListener(
+            AddonEvent.PostSetup, "BlackList", OnBlacklistAddonUpdated);
+        PassportCheckerReborn.AddonLifecycle.RegisterListener(
+            AddonEvent.PostRefresh, "BlackList", OnBlacklistAddonUpdated);
 
         // ── IPartyFinderGui listing subscription ────────────────────────────
         // Captures host ContentId/Name/World from every PF listing packet.
@@ -248,6 +272,13 @@ public sealed class PartyFinderManager : IDisposable
         var worldId = (ushort)listing.HomeWorld.RowId;
         var listingId = listing.Id;
         pfListingPlayerCache[listing.ContentId] = (name, worldId, listingId);
+
+        // Persist to disk so the name is available in future sessions without
+        // needing another CharaCard request. Always overwrite: PF packet data is
+        // the freshest available source and handles name/world changes.
+        var worldName = PassportCheckerReborn.DataManager.GetExcelSheet<World>()
+            ?.GetRowOrDefault(worldId)?.Name.ToString() ?? string.Empty;
+        plugin.CidCache.Set(listing.ContentId, name, worldId, worldName);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -282,11 +313,22 @@ public sealed class PartyFinderManager : IDisposable
         if (contentId == 0)
             return null;
 
+        // Prefer the in-memory PF listing cache (always fresh from network packets).
         if (pfListingPlayerCache.TryGetValue(contentId, out var cached))
         {
             var worldSheet = PassportCheckerReborn.DataManager.GetExcelSheet<World>();
             var worldName = worldSheet?.GetRowOrDefault(cached.WorldId)?.Name.ToString() ?? string.Empty;
             return (cached.Name, worldName);
+        }
+
+        // Fall back to the persistent CID cache for CIDs seen in previous sessions.
+        // This avoids a CharaCard round-trip for already-known players.
+        // Note: the entry may be stale if the player changed their name or world;
+        // it will be overwritten the next time fresh data arrives.
+        if (plugin.CidCache.TryGet(contentId, out var persisted) && persisted != null
+            && !string.IsNullOrEmpty(persisted.Name))
+        {
+            return (persisted.Name, persisted.WorldName);
         }
 
         return null;
@@ -396,6 +438,8 @@ public sealed class PartyFinderManager : IDisposable
     /// </summary>
     private async Task ResolveUnresolvedMembersAsync(CancellationToken ct)
     {
+        var resolved = false;
+
         for (var i = 0; i < currentMembers.Count; i++)
         {
             if (ct.IsCancellationRequested)
@@ -411,24 +455,30 @@ public sealed class PartyFinderManager : IDisposable
                 if (ct.IsCancellationRequested)
                     return;
 
-                if (info is { } resolved && !string.IsNullOrEmpty(resolved.Name))
+                if (info is { } resolvedInfo && !string.IsNullOrEmpty(resolvedInfo.Name))
                 {
                     var worldSheet = PassportCheckerReborn.DataManager.GetExcelSheet<World>();
-                    var worldName = worldSheet?.GetRowOrDefault(resolved.WorldId)?.Name.ToString() ?? string.Empty;
+                    var worldName = worldSheet?.GetRowOrDefault(resolvedInfo.WorldId)?.Name.ToString() ?? string.Empty;
 
-                    // Update the PF listing cache so future lookups are instant
+                    // Update the in-memory PF listing cache so future lookups within the
+                    // same session are instant.
                     var existingListingId = pfListingPlayerCache.TryGetValue(member.ContentId, out var prev) ? prev.ListingId : 0u;
-                    pfListingPlayerCache[member.ContentId] = (resolved.Name, resolved.WorldId, existingListingId);
+                    pfListingPlayerCache[member.ContentId] = (resolvedInfo.Name, resolvedInfo.WorldId, existingListingId);
 
-                    // Update the member in-place (the overlay re-reads CurrentMembers each frame)
+                    // Persist to the CID cache so this player is recognised in future
+                    // sessions without another CharaCard round-trip.
+                    plugin.CidCache.Set(member.ContentId, resolvedInfo.Name, resolvedInfo.WorldId, worldName);
+                    resolved = true;
+
+                    // Update the member in-place (the overlay re-reads CurrentMembers each frame).
                     if (i < currentMembers.Count && currentMembers[i].ContentId == member.ContentId)
                     {
-                        currentMembers[i] = member with { Name = resolved.Name, World = worldName };
+                        currentMembers[i] = member with { Name = resolvedInfo.Name, World = worldName };
                     }
                 }
                 else
                 {
-                    // Player has adventure plate hidden - treat as private and remove
+                    // Player has adventure plate hidden — treat as private and remove.
                     if (i < currentMembers.Count && currentMembers[i].ContentId == member.ContentId)
                     {
                         currentMembers.RemoveAt(i);
@@ -446,6 +496,10 @@ public sealed class PartyFinderManager : IDisposable
                     $"[PartyFinderManager] Error resolving CID: {member.ContentId:X16} via CharaCard.");
             }
         }
+
+        // Flush any newly-resolved names to disk in one shot at the end of the batch.
+        if (resolved)
+            plugin.CidCache.Save();
     }
 
     private void OnPFDetailSetup(AddonEvent type, AddonArgs args)
@@ -455,6 +509,9 @@ public sealed class PartyFinderManager : IDisposable
 
         // Pause auto-refresh while the detail pane is open (matches DailyRoutines pattern)
         StopAutoRefreshTimer();
+
+        // Refresh the blacklist cache in case entries changed since last open
+        ReadBlacklistFromAddon();
 
         // Read duty name from the addon, then detect duty and populate members
         ReadDutyNameFromAddon();
@@ -486,6 +543,9 @@ public sealed class PartyFinderManager : IDisposable
         CurrentDutyId = 0;
         CurrentDutyName = string.Empty;
         IsHighEndDuty = false;
+
+        // Persist any names that were cached during this detail-pane session.
+        plugin.CidCache.Save();
 
         // Resume auto-refresh
         if (IsListOpen)
@@ -974,12 +1034,100 @@ public sealed class PartyFinderManager : IDisposable
     /// <summary>Manually refresh the member list (e.g. on overlay open).</summary>
     public void RequestRefresh() => RefreshMembers();
 
+    /// <summary>Manually triggers a live re-read of the blacklist string array and saves the result.</summary>
+    public void ForceRefreshBlacklist() => ReadBlacklistFromAddon();
+
     /// <summary>
     /// Checks if a player is in the known-players set.
     /// </summary>
     public bool IsKnownPlayer(string name, string world)
     {
         return KnownPlayers.ContainsKey($"{name}@{world}");
+    }
+
+    /// <summary>
+    /// Checks if a player is on the local user's blacklist.
+    /// </summary>
+    public bool IsBlacklisted(string name, string world)
+    {
+        if (!plugin.Configuration.EnableBlacklistFeature)
+            return false;
+        if (string.IsNullOrEmpty(name))
+            return false;
+        var result = (!string.IsNullOrEmpty(world) && blacklistedPlayers.ContainsKey($"{name}@{world}"))
+                     || blacklistedPlayers.ContainsKey(name);
+        //PassportCheckerReborn.Log.Debug($"[PartyFinderManager] IsBlacklisted(\"{name}\"@\"{world}\") = {result}  (cache size={blacklistedPlayers.Count})");
+        return result;
+    }
+
+    /// <summary>
+    /// Seeds <see cref="blacklistedPlayers"/> from the persisted <see cref="BlacklistCache"/>
+    /// so the blacklist is available immediately on plugin load, before the first live
+    /// read from <c>BlackListStringArray</c>.
+    /// </summary>
+    private void SeedBlacklistFromCache()
+    {
+        foreach (var key in plugin.BlacklistCache.GetAllKeys())
+            blacklistedPlayers[key] = true;
+
+        //PassportCheckerReborn.Log.Debug($"[PartyFinderManager] Seeded {blacklistedPlayers.Count} entries from BlacklistCache.");
+    }
+
+    /// <summary>
+    /// Reads all blacklisted player entries from <see cref="BlackListStringArray"/> and
+    /// caches them as "Name@World" keys for fast per-frame lookup.
+    /// The string array is always present in memory; the BlackList addon does not need
+    /// to be open.
+    /// </summary>
+    private unsafe void ReadBlacklistFromAddon()
+    {
+        //PassportCheckerReborn.Log.Debug("[PartyFinderManager] ReadBlacklistFromAddon called.");
+        var newEntries = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var array = BlackListStringArray.Instance();
+            if (array == null)
+            {
+                //PassportCheckerReborn.Log.Debug("[PartyFinderManager] BlackListStringArray.Instance() returned null – skipping update.");
+                return;
+            }
+
+            //PassportCheckerReborn.Log.Debug($"[PartyFinderManager] BlackListStringArray obtained. PlayerNames.Length={array->PlayerNames.Length}");
+
+            var names = array->PlayerNames;
+            var worlds = array->Homeworlds;
+
+            for (var i = 0; i < names.Length; i++)
+            {
+                var name = names[i].ToString();
+                if (string.IsNullOrEmpty(name))
+                    break;
+
+                var world = worlds[i].ToString() ?? string.Empty;
+                var key = string.IsNullOrEmpty(world) ? name : $"{name}@{world}";
+                //PassportCheckerReborn.Log.Debug($"[PartyFinderManager] Blacklist entry [{i}]: \"{key}\"");
+                newEntries[key] = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            PassportCheckerReborn.Log.Warning(ex, "[PartyFinderManager] Failed to read BlackList string array.");
+        }
+
+        blacklistedPlayers.Clear();
+        foreach (var (k, v) in newEntries)
+            blacklistedPlayers[k] = v;
+
+        PassportCheckerReborn.Log.Debug($"[PartyFinderManager] Blacklist cache updated: {blacklistedPlayers.Count} entr{(blacklistedPlayers.Count == 1 ? "y" : "ies")}.");
+
+        // Persist the live snapshot to disk so it survives plugin reloads.
+        plugin.BlacklistCache.ReplaceAll(newEntries.Keys);
+    }
+
+    private void OnBlacklistAddonUpdated(AddonEvent type, AddonArgs args)
+    {
+        //PassportCheckerReborn.Log.Debug($"[PartyFinderManager] OnBlacklistAddonUpdated fired (event={type}).");
+        ReadBlacklistFromAddon();
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -1001,6 +1149,7 @@ public sealed class PartyFinderManager : IDisposable
         PassportCheckerReborn.AddonLifecycle.UnregisterListener(OnPFListSetup);
         PassportCheckerReborn.AddonLifecycle.UnregisterListener(OnPFListRefresh);
         PassportCheckerReborn.AddonLifecycle.UnregisterListener(OnPFListFinalize);
+        PassportCheckerReborn.AddonLifecycle.UnregisterListener(OnBlacklistAddonUpdated);
 
         PassportCheckerReborn.PartyFinderGui.ReceiveListing -= OnReceiveListing;
 

@@ -236,6 +236,7 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
         // ── Known-player border (TODO item 7) ────────────────────────────────
         var isKnown = cfg.SpecialBorderColorForKnownPlayers &&
                       plugin.PartyFinderManager.IsKnownPlayer(member.Name, member.World);
+        var isBlacklisted = plugin.PartyFinderManager.IsBlacklisted(member.Name, member.World);
 
         if (isKnown)
         {
@@ -299,7 +300,15 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
         else
             ImGui.TextUnformatted(displayName);
 
-        // ── Cached Tomestone data (only shown after user clicks Tomestone button) ──
+        if (isBlacklisted)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.9f, 0.2f, 0.2f, 1.0f), "[BL]");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("On your blacklist");
+        }
+
+        // ── Cached Tomestone data
         if (cfg.EnableTomestoneIntegration && tomestoneFetched)
         {
             if (tomestoneBatchInProgress)
