@@ -33,7 +33,7 @@ public class Configuration : IPluginConfiguration
     public bool EnableAutomaticRefresh { get; set; } = false;
     public int AutoRefreshIntervalSeconds { get; set; } = 30;
     public bool EnableOneClickJobFilter { get; set; } = false;
-    public bool RightClickPlayerNameForRecruitment2 { get; set; } = false;
+    public bool RightClickPlayerNameForRecruitment3 { get; set; } = false;
 
     // ── Overlay ───────────────────────────────────────────────────────────────
     public bool ShowMemberInfoOverlay { get; set; } = true;

@@ -188,10 +188,10 @@ public class MainWindow : Window, IDisposable
         ImGui.EndDisabled();
 
         ImGui.BeginDisabled();
-        var rightClick = Configuration.RightClickPlayerNameForRecruitment2;
+        var rightClick = Configuration.RightClickPlayerNameForRecruitment3;
         if (ImGui.Checkbox("Right-Click Player Name to View Their Recruitment", ref rightClick))
         {
-            Configuration.RightClickPlayerNameForRecruitment2 = rightClick;
+            Configuration.RightClickPlayerNameForRecruitment3 = rightClick;
             Configuration.Save();
         }
         ImGui.EndDisabled();

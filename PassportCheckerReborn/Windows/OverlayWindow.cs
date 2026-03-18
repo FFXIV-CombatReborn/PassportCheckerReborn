@@ -380,19 +380,25 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
 
                         if (cachedFf.TotalKills > 0 && p1Parse.HasValue && p2Parse.HasValue)
                         {
-                            var displayStr =
-                                $"Cleared {cachedFf.TotalKills}X P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%";
-
                             // Show best parse for current job if available
                             if (cachedFf.CurrentJobBestParse.HasValue)
                             {
-                                var color = GetParseColor(p2Parse.Value);
-                                ImGui.TextColored(color, displayStr);
+                                ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
+                                    $"Cleared {cachedFf.TotalKills}X");
+                                ImGui.SameLine();
+                                ImGui.TextUnformatted("P1");
+                                ImGui.SameLine();
+                                ImGui.TextColored(GetParseColor(p1Parse.Value), $"{p1Parse.Value:F0}%");
+                                ImGui.SameLine();
+                                ImGui.TextUnformatted("P2");
+                                ImGui.SameLine();
+                                ImGui.TextColored(GetParseColor(p2Parse.Value), $"{p2Parse.Value:F0}%");
                             }
                             else
                             {
                                 // Has clears but no current job logs
-                                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), displayStr);
+                                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+                                    $"Cleared {cachedFf.TotalKills}X P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%");
                             }
 
                             // Show best parse on a different job if applicable
