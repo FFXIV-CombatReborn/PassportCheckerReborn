@@ -379,47 +379,47 @@ public sealed class FFLogsService : IDisposable
     /// AtkValue[15]) to FFLogs encounter IDs and difficulty levels.
     /// Must be updated each content tier.
     /// </summary>
-    private static readonly Dictionary<string, (int EncounterId, int Difficulty)> DutyNameToEncounterInfo = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, (int ZoneId, int EncounterId, int Difficulty)> DutyNameToEncounterInfo = new(StringComparer.OrdinalIgnoreCase)
     {
         // Savage Raids
-        ["AAC Light-heavyweight M1 (Savage)"] = (93, DifficultyHigh),
-        ["AAC Light-heavyweight M2 (Savage)"] = (94, DifficultyHigh),
-        ["AAC Light-heavyweight M3 (Savage)"] = (95, DifficultyHigh),
-        ["AAC Light-heavyweight M4 (Savage)"] = (96, DifficultyHigh),
+        ["AAC Light-heavyweight M1 (Savage)"] = (62, 93, DifficultyHigh),
+        ["AAC Light-heavyweight M2 (Savage)"] = (62, 94, DifficultyHigh),
+        ["AAC Light-heavyweight M3 (Savage)"] = (62, 95, DifficultyHigh),
+        ["AAC Light-heavyweight M4 (Savage)"] = (62, 96, DifficultyHigh),
 
-        ["AAC Cruiserweight M1 (Savage)"] = (97, DifficultyHigh),
-        ["AAC Cruiserweight M2 (Savage)"] = (98, DifficultyHigh),
-        ["AAC Cruiserweight M3 (Savage)"] = (99, DifficultyHigh),
-        ["AAC Cruiserweight M4 (Savage)"] = (100, DifficultyHigh),
+        ["AAC Cruiserweight M1 (Savage)"] = (68, 97, DifficultyHigh),
+        ["AAC Cruiserweight M2 (Savage)"] = (68, 98, DifficultyHigh),
+        ["AAC Cruiserweight M3 (Savage)"] = (68, 99, DifficultyHigh),
+        ["AAC Cruiserweight M4 (Savage)"] = (68, 100, DifficultyHigh),
 
-        ["AAC Heavyweight M1 (Savage)"] = (101, DifficultyHigh),
-        ["AAC Heavyweight M2 (Savage)"] = (102, DifficultyHigh),
-        ["AAC Heavyweight M3 (Savage)"] = (103, DifficultyHigh),
-        ["AAC Heavyweight M4 (Savage) P1"] = (104, DifficultyHigh),
-        ["AAC Heavyweight M4 (Savage) P2"] = (105, DifficultyHigh),
+        ["AAC Heavyweight M1 (Savage)"] = (73, 101, DifficultyHigh),
+        ["AAC Heavyweight M2 (Savage)"] = (73, 102, DifficultyHigh),
+        ["AAC Heavyweight M3 (Savage)"] = (73, 103, DifficultyHigh),
+        ["AAC Heavyweight M4 (Savage) P1"] = (73, 104, DifficultyHigh),
+        ["AAC Heavyweight M4 (Savage) P2"] = (73, 105, DifficultyHigh),
 
         // Chaotic Raids
-        ["The Cloud of Darkness (Chaotic)"] = (2061, DifficultyNormal),
+        ["The Cloud of Darkness (Chaotic)"] = (66, 2061, DifficultyNormal),
 
         // Unreal Trials
-        ["Tsukuyomi's Pain (Unreal)"] = (3012, DifficultyNormal),
+        ["Tsukuyomi's Pain (Unreal)"] = (64, 3012, DifficultyNormal),
 
         // Extreme Trials
-        ["Worqor Lar Dor (Extreme)"] = (1071, DifficultyHigh),
-        ["Everkeep (Extreme)"] = (1072, DifficultyHigh),
-        ["The Minstrel's Ballad: Sphene's Burden"] = (1078, DifficultyHigh),
-        ["Recollection (Extreme)"] = (1080, DifficultyHigh),
-        ["The Minstrel's Ballad: Necron's Embrace"] = (1081, DifficultyHigh),
-        ["The Windward Wilds (Extreme)"] = (1082, DifficultyHigh),
-        ["Hell on Rails (Extreme)"] = (1083, DifficultyHigh),
+        ["Worqor Lar Dor (Extreme)"] = (58, 1071, DifficultyNormal),
+        ["Everkeep (Extreme)"] = (58, 1072, DifficultyNormal),
+        ["The Minstrel's Ballad: Sphene's Burden"] = (58, 1078, DifficultyNormal),
+        ["Recollection (Extreme)"] = (67, 1080, DifficultyNormal),
+        ["The Minstrel's Ballad: Necron's Embrace"] = (67, 1081, DifficultyNormal),
+        ["The Windward Wilds (Extreme)"] = (67, 1082, DifficultyNormal),
+        ["Hell on Rails (Extreme)"] = (72, 1083, DifficultyNormal),
 
         // Ultimate Raids
-        ["The Unending Coil of Bahamut (Ultimate)"] = (1073, DifficultyNormal),
-        ["The Weapon's Refrain (Ultimate)"] = (1074, DifficultyNormal),
-        ["The Epic of Alexander (Ultimate)"] = (1075, DifficultyNormal),
-        ["Dragonsong's Reprise (Ultimate)"] = (1076, DifficultyNormal),
-        ["The Omega Protocol (Ultimate)"] = (1077, DifficultyNormal),
-        ["Futures Rewritten (Ultimate)"] = (1079, DifficultyNormal),
+        ["The Unending Coil of Bahamut (Ultimate)"] = (59, 1073, DifficultyNormal),
+        ["The Weapon's Refrain (Ultimate)"] = (59, 1074, DifficultyNormal),
+        ["The Epic of Alexander (Ultimate)"] = (59, 1075, DifficultyNormal),
+        ["Dragonsong's Reprise (Ultimate)"] = (59, 1076, DifficultyNormal),
+        ["The Omega Protocol (Ultimate)"] = (59, 1077, DifficultyNormal),
+        ["Futures Rewritten (Ultimate)"] = (59, 1079, DifficultyNormal),
     };
 
     /// <summary>Backwards-compatible helper that returns only the encounter ID.</summary>
@@ -428,14 +428,19 @@ public sealed class FFLogsService : IDisposable
     /// <summary>Maps encounter IDs to their FFLogs difficulty level.</summary>
     private static readonly Dictionary<int, int> EncounterIdToDifficulty;
 
+    /// <summary>Maps encounter IDs to their FFLogs zone ID.</summary>
+    private static readonly Dictionary<int, int> EncounterIdToZoneId;
+
     static FFLogsService()
     {
         DutyNameToEncounterId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         EncounterIdToDifficulty = [];
-        foreach (var (name, (encId, diff)) in DutyNameToEncounterInfo)
+        EncounterIdToZoneId = [];
+        foreach (var (name, (zoneId, encId, diff)) in DutyNameToEncounterInfo)
         {
             DutyNameToEncounterId[name] = encId;
             EncounterIdToDifficulty[encId] = diff;
+            EncounterIdToZoneId[encId] = zoneId;
         }
     }
 
@@ -444,6 +449,30 @@ public sealed class FFLogsService : IDisposable
     /// </summary>
     public static int? GetDifficultyForEncounter(int encounterId)
         => EncounterIdToDifficulty.TryGetValue(encounterId, out var diff) ? diff : null;
+
+    /// <summary>
+    /// Returns the FFLogs zone ID for the given encounter ID, or <c>null</c> if unknown.
+    /// </summary>
+    public static int? GetZoneIdForEncounter(int encounterId)
+        => EncounterIdToZoneId.TryGetValue(encounterId, out var zoneId) ? zoneId : null;
+
+    /// <summary>
+    /// Returns the FFLogs zone ID for the given FFXIV duty name, or <c>null</c> if not mapped.
+    /// For multi-part duties the zone is resolved from the primary (phase 1) encounter ID.
+    /// </summary>
+    public static int? GetZoneIdForDuty(string? dutyName)
+    {
+        if (string.IsNullOrWhiteSpace(dutyName))
+            return null;
+
+        if (DutyNameToEncounterInfo.TryGetValue(dutyName!, out var info))
+            return info.ZoneId;
+
+        if (MultiPartDutyToEncounterIds.TryGetValue(dutyName!, out var multiIds))
+            return GetZoneIdForEncounter(multiIds.Phase1EncounterId);
+
+        return null;
+    }
 
     private static readonly Dictionary<string, (int Phase1EncounterId, int Phase2EncounterId)> MultiPartDutyToEncounterIds =
         new(StringComparer.OrdinalIgnoreCase)
