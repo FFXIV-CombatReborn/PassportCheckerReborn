@@ -39,59 +39,83 @@ public sealed partial class TomestoneService : IDisposable
     /// </summary>
     private static readonly Dictionary<string, TomestoneEncounterParams> DutyNameToTomestoneParams =
         new(StringComparer.OrdinalIgnoreCase)
-    {
-        // ── Dawntrail Ultimates ──────────────────────────────────────────────
-        ["Futures Rewritten (Ultimate)"] =
-            new("dawntrail", "ultimates", "futures-rewritten-ultimate"),
+        {
+            // ── Dawntrail Ultimates ──────────────────────────────────────────────
+            ["Futures Rewritten (Ultimate)"] =
+                new("dawntrail", "ultimates", "futures-rewritten-ultimate"),
 
-        // ── Endwalker Ultimates ──────────────────────────────────────────────
-        ["The Omega Protocol (Ultimate)"] =
-            new("endwalker", "ultimates", "the-omega-protocol-ultimate"),
-        ["Dragonsong's Reprise (Ultimate)"] =
-            new("endwalker", "ultimates", "dragonsongs-reprise-ultimate"),
+            // ── Endwalker Ultimates ──────────────────────────────────────────────
+            ["The Omega Protocol (Ultimate)"] =
+                new("endwalker", "ultimates", "the-omega-protocol-ultimate"),
+            ["Dragonsong's Reprise (Ultimate)"] =
+                new("endwalker", "ultimates", "dragonsongs-reprise-ultimate"),
 
-        // ── Shadowbringers Ultimates ─────────────────────────────────────────
-        ["The Epic of Alexander (Ultimate)"] =
-            new("shadowbringers", "ultimates", "the-epic-of-alexander-ultimate"),
+            // ── Shadowbringers Ultimates ─────────────────────────────────────────
+            ["The Epic of Alexander (Ultimate)"] =
+                new("shadowbringers", "ultimates", "the-epic-of-alexander-ultimate"),
 
-        // ── Stormblood Ultimates ─────────────────────────────────────────────
-        ["The Weapon's Refrain (Ultimate)"] =
-            new("stormblood", "ultimates", "the-weapons-refrain-ultimate"),
-        ["The Unending Coil of Bahamut (Ultimate)"] =
-            new("stormblood", "ultimates", "the-unending-coil-of-bahamut-ultimate"),
+            // ── Stormblood Ultimates ─────────────────────────────────────────────
+            ["The Weapon's Refrain (Ultimate)"] =
+                new("stormblood", "ultimates", "the-weapons-refrain-ultimate"),
+            ["The Unending Coil of Bahamut (Ultimate)"] =
+                new("stormblood", "ultimates", "the-unending-coil-of-bahamut-ultimate"),
 
-        // ── Dawntrail Savage – AAC Heavyweight ───────────────────────────────
-        ["AAC Heavyweight M1 (Savage)"] =
-            new("dawntrail", "aac-heavyweight-savage", "vamp-fatale"),
-        ["AAC Heavyweight M2 (Savage)"] =
-            new("dawntrail", "aac-heavyweight-savage", "red-hot-deep-blue"),
-        ["AAC Heavyweight M3 (Savage)"] =
-            new("dawntrail", "aac-heavyweight-savage", "the-tyrant"),
-        ["AAC Heavyweight M4 (Savage) P1"] =
-            new("dawntrail", "aac-heavyweight-savage", "lindwurm"),
-        ["AAC Heavyweight M4 (Savage) P2"] =
-            new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
+            // ── Dawntrail Savage – AAC Heavyweight ───────────────────────────────
+            ["AAC Heavyweight M1 (Savage)"] =
+                new("dawntrail", "aac-heavyweight-savage", "vamp-fatale"),
+            ["AAC Heavyweight M2 (Savage)"] =
+                new("dawntrail", "aac-heavyweight-savage", "red-hot-deep-blue"),
+            ["AAC Heavyweight M3 (Savage)"] =
+                new("dawntrail", "aac-heavyweight-savage", "the-tyrant"),
+            ["AAC Heavyweight M4 (Savage) P1"] =
+                new("dawntrail", "aac-heavyweight-savage", "lindwurm"),
+            ["AAC Heavyweight M4 (Savage) P2"] =
+                new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
 
-        // ── Dawntrail Savage – AAC Cruiserweight ─────────────────────────────
-        ["AAC Cruiserweight M1 (Savage)"] =
-            new("dawntrail", "aac-cruiserweight-savage", "dancing-green"),
-        ["AAC Cruiserweight M2 (Savage)"] =
-            new("dawntrail", "aac-cruiserweight-savage", "honey-b-lovely"),
-        ["AAC Cruiserweight M3 (Savage)"] =
-            new("dawntrail", "aac-cruiserweight-savage", "brute-bomber"),
-        ["AAC Cruiserweight M4 (Savage)"] =
-            new("dawntrail", "aac-cruiserweight-savage", "wicked-thunder"),
+            // ── Dawntrail Savage – AAC Cruiserweight ─────────────────────────────
+            ["AAC Cruiserweight M1 (Savage)"] =
+                new("dawntrail", "aac-cruiserweight-savage", "dancing-green"),
+            ["AAC Cruiserweight M2 (Savage)"] =
+                new("dawntrail", "aac-cruiserweight-savage", "honey-b-lovely"),
+            ["AAC Cruiserweight M3 (Savage)"] =
+                new("dawntrail", "aac-cruiserweight-savage", "brute-bomber"),
+            ["AAC Cruiserweight M4 (Savage)"] =
+                new("dawntrail", "aac-cruiserweight-savage", "wicked-thunder"),
 
-        // ── Dawntrail Savage – AAC Light-heavyweight ─────────────────────────
-        ["AAC Light-heavyweight M1 (Savage)"] =
-            new("dawntrail", "aac-light-heavyweight-savage", "black-cat"),
-        ["AAC Light-heavyweight M2 (Savage)"] =
-            new("dawntrail", "aac-light-heavyweight-savage", "honey-b-lovely"),
-        ["AAC Light-heavyweight M3 (Savage)"] =
-            new("dawntrail", "aac-light-heavyweight-savage", "brute-bomber"),
-        ["AAC Light-heavyweight M4 (Savage)"] =
-            new("dawntrail", "aac-light-heavyweight-savage", "wicked-thunder"),
-    };
+            // ── Dawntrail Savage – AAC Light-heavyweight ─────────────────────────
+            ["AAC Light-heavyweight M1 (Savage)"] =
+                new("dawntrail", "aac-light-heavyweight-savage", "black-cat"),
+            ["AAC Light-heavyweight M2 (Savage)"] =
+                new("dawntrail", "aac-light-heavyweight-savage", "honey-b-lovely"),
+            ["AAC Light-heavyweight M3 (Savage)"] =
+                new("dawntrail", "aac-light-heavyweight-savage", "brute-bomber"),
+            ["AAC Light-heavyweight M4 (Savage)"] =
+                new("dawntrail", "aac-light-heavyweight-savage", "wicked-thunder"),
+
+            // ── Dawntrail Extreme Trials ──────────────────────────────────────────
+            ["Worqor Lar Dor (Extreme)"] =
+                new("dawntrail", "extremes", "worqor-lar-dor"),
+            ["Everkeep (Extreme)"] =
+                new("dawntrail", "extremes", "everkeep"),
+            ["The Minstrel's Ballad: Sphene's Burden"] =
+                new("dawntrail", "extremes", "the-minstrels-ballad-sphenes-burden"),
+            ["Recollection (Extreme)"] =
+                new("dawntrail", "extremes", "recollection"),
+            ["The Minstrel's Ballad: Necron's Embrace"] =
+                new("dawntrail", "extremes", "the-minstrels-ballad-necrons-embrace"),
+            ["The Windward Wilds (Extreme)"] =
+                new("dawntrail", "extremes", "the-windward-wilds"),
+            ["Hell on Rails (Extreme)"] =
+                new("dawntrail", "extremes", "hell-on-rails"),
+
+            // ── Dawntrail Unreal ──────────────────────────────────────────────────
+            ["Tsukuyomi's Pain (Unreal)"] =
+                new("dawntrail", "extremes", "tsukuyomis-pain"),
+
+            // ── Dawntrail Chaotic ─────────────────────────────────────────────────
+            ["The Cloud of Darkness (Chaotic)"] =
+                new("dawntrail", "chaotic", "the-cloud-of-darkness"),
+        };
 
     /// <summary>
     /// Maps base duty names for multi-part encounters to their preferred

@@ -1,5 +1,6 @@
 using Dalamud.Configuration;
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace PassportCheckerReborn;
@@ -43,7 +44,11 @@ public class Configuration : IPluginConfiguration
     public bool EnableTomestoneIntegration { get; set; } = true;
     public bool ShowPartyListOverlay { get; set; } = false;
     public PartyListOverlayPosition PartyListOverlayPosition { get; set; } = PartyListOverlayPosition.Left;
-    public bool HidePartyListInDutyOrCombat { get; set; } = true;
+    public bool HidePartyListInDuty { get; set; } = true;
+    public bool HidePartyListInCombat { get; set; } = true;
+
+    // ── Blacklist ─────────────────────────────────────────────────────────────
+    public bool EnableBlacklistFeature { get; set; } = true;
 
     // ── Tomestone Integration ────────────────────────────────────────────────
     public string TomestoneApiKey { get; set; } = string.Empty;

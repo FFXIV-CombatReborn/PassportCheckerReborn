@@ -372,7 +372,7 @@ public sealed class FFLogsService : IDisposable
 
     // FFLogs difficulty constants
     private const int DifficultyNormal = 100;
-    private const int DifficultySavage = 101;
+    private const int DifficultyHigh = 101;
 
     /// <summary>
     /// Maps FFXIV duty names (from ContentFinderCondition / LookingForGroupDetail
@@ -381,28 +381,39 @@ public sealed class FFLogsService : IDisposable
     /// </summary>
     private static readonly Dictionary<string, (int EncounterId, int Difficulty)> DutyNameToEncounterInfo = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["AAC Light-heavyweight M1 (Savage)"] = (93, DifficultySavage),
-        ["AAC Light-heavyweight M2 (Savage)"] = (94, DifficultySavage),
-        ["AAC Light-heavyweight M3 (Savage)"] = (95, DifficultySavage),
-        ["AAC Light-heavyweight M4 (Savage)"] = (96, DifficultySavage),
+        // Savage Raids
+        ["AAC Light-heavyweight M1 (Savage)"] = (93, DifficultyHigh),
+        ["AAC Light-heavyweight M2 (Savage)"] = (94, DifficultyHigh),
+        ["AAC Light-heavyweight M3 (Savage)"] = (95, DifficultyHigh),
+        ["AAC Light-heavyweight M4 (Savage)"] = (96, DifficultyHigh),
 
-        ["AAC Cruiserweight M1 (Savage)"] = (97, DifficultySavage),
-        ["AAC Cruiserweight M2 (Savage)"] = (98, DifficultySavage),
-        ["AAC Cruiserweight M3 (Savage)"] = (99, DifficultySavage),
-        ["AAC Cruiserweight M4 (Savage)"] = (100, DifficultySavage),
+        ["AAC Cruiserweight M1 (Savage)"] = (97, DifficultyHigh),
+        ["AAC Cruiserweight M2 (Savage)"] = (98, DifficultyHigh),
+        ["AAC Cruiserweight M3 (Savage)"] = (99, DifficultyHigh),
+        ["AAC Cruiserweight M4 (Savage)"] = (100, DifficultyHigh),
 
-        ["AAC Heavyweight M1 (Savage)"] = (101, DifficultySavage),
-        ["AAC Heavyweight M2 (Savage)"] = (102, DifficultySavage),
-        ["AAC Heavyweight M3 (Savage)"] = (103, DifficultySavage),
-        ["AAC Heavyweight M4 (Savage) P1"] = (104, DifficultySavage),
-        ["AAC Heavyweight M4 (Savage) P2"] = (105, DifficultySavage),
+        ["AAC Heavyweight M1 (Savage)"] = (101, DifficultyHigh),
+        ["AAC Heavyweight M2 (Savage)"] = (102, DifficultyHigh),
+        ["AAC Heavyweight M3 (Savage)"] = (103, DifficultyHigh),
+        ["AAC Heavyweight M4 (Savage) P1"] = (104, DifficultyHigh),
+        ["AAC Heavyweight M4 (Savage) P2"] = (105, DifficultyHigh),
 
+        // Chaotic Raids
         ["The Cloud of Darkness (Chaotic)"] = (2061, DifficultyNormal),
 
+        // Unreal Trials
         ["Tsukuyomi's Pain (Unreal)"] = (3012, DifficultyNormal),
 
-        ["Hell on Rails (Extreme)"] = (1083, DifficultyNormal),
+        // Extreme Trials
+        ["Worqor Lar Dor (Extreme)"] = (1071, DifficultyHigh),
+        ["Everkeep (Extreme)"] = (1072, DifficultyHigh),
+        ["The Minstrel's Ballad: Sphene's Burden"] = (1078, DifficultyHigh),
+        ["Recollection (Extreme)"] = (1080, DifficultyHigh),
+        ["The Minstrel's Ballad: Necron's Embrace"] = (1081, DifficultyHigh),
+        ["The Windward Wilds (Extreme)"] = (1082, DifficultyHigh),
+        ["Hell on Rails (Extreme)"] = (1083, DifficultyHigh),
 
+        // Ultimate Raids
         ["The Unending Coil of Bahamut (Ultimate)"] = (1073, DifficultyNormal),
         ["The Weapon's Refrain (Ultimate)"] = (1074, DifficultyNormal),
         ["The Epic of Alexander (Ultimate)"] = (1075, DifficultyNormal),

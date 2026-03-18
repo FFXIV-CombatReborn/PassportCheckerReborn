@@ -33,6 +33,7 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
 
     private const string CommandName = "/pfchecker";
     public const string ALTCOMMAND = "/pcr";
+    private const string PartyListCommandName = "/pcrparty";
 
     public Configuration Configuration { get; init; }
 
@@ -43,6 +44,8 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
 
     internal TomestoneService TomestoneService { get; init; }
     internal FFLogsService FFLogsService { get; init; }
+    internal CidCache CidCache { get; init; }
+    internal BlacklistCache BlacklistCache { get; init; }
     internal PartyFinderManager PartyFinderManager { get; init; }
 
     public PassportCheckerReborn()
@@ -51,6 +54,8 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
 
         TomestoneService = new TomestoneService(this);
         FFLogsService = new FFLogsService(this);
+        CidCache = new CidCache();
+        BlacklistCache = new BlacklistCache();
         PartyFinderManager = new PartyFinderManager(this);
 
         MainWindow = new MainWindow(this);
@@ -68,6 +73,10 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
         CommandManager.AddHandler(ALTCOMMAND, new CommandInfo(OnCommand)
         {
             HelpMessage = "Open Passport Check Reborn menu."
+        });
+        CommandManager.AddHandler(PartyListCommandName, new CommandInfo(OnPartyListCommand)
+        {
+            HelpMessage = "Toggle the Party List Overlay on or off."
         });
 
         PluginInterface.UiBuilder.Draw += ManageWindowStates;
@@ -90,16 +99,26 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
         PartyListWindow.Dispose();
 
         PartyFinderManager.Dispose();
+        CidCache.Dispose();
+        BlacklistCache.Dispose();
         TomestoneService.Dispose();
         FFLogsService.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         CommandManager.RemoveHandler(ALTCOMMAND);
+        CommandManager.RemoveHandler(PartyListCommandName);
     }
 
     private void OnCommand(string command, string args)
     {
         MainWindow.Toggle();
+    }
+
+    private void OnPartyListCommand(string command, string args)
+    {
+        Configuration.ShowPartyListOverlay = !Configuration.ShowPartyListOverlay;
+        Configuration.Save();
+        ChatGui.Print($"[PassportChecker] Party List Overlay {(Configuration.ShowPartyListOverlay ? "shown" : "hidden")}.");
     }
 
     public void ToggleMainUi() => MainWindow.Toggle();
@@ -144,15 +163,9 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
             return;
         }
 
-        // Hide if in duty or combat (when toggle is enabled)
-        if (Configuration.HidePartyListInDutyOrCombat
-            && (Condition[ConditionFlag.BoundByDuty] || Condition[ConditionFlag.InCombat]))
-        {
-            PartyListWindow.IsOpen = false;
-        }
-        else
-        {
-            PartyListWindow.IsOpen = true;
-        }
+        // Hide in duty and/or combat based on individual settings
+        var hideNow = (Configuration.HidePartyListInDuty && Condition[ConditionFlag.BoundByDuty])
+                   || (Configuration.HidePartyListInCombat && Condition[ConditionFlag.InCombat]);
+        PartyListWindow.IsOpen = !hideNow;
     }
 }

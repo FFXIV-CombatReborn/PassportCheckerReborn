@@ -197,6 +197,26 @@ public class MainWindow : Window, IDisposable
         ImGui.EndDisabled();
 
         ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.0f, 1.0f), "Blacklist");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var enableBlacklist = Configuration.EnableBlacklistFeature;
+        if (ImGui.Checkbox("Enable Blacklist Feature", ref enableBlacklist))
+        {
+            Configuration.EnableBlacklistFeature = enableBlacklist;
+            Configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When enabled, players on your in-game blacklist are marked with [BL] in the overlay.");
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh##bl_refresh"))
+            plugin.PartyFinderManager.ForceRefreshBlacklist();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-reads the blacklist from the game and saves the result.");
+
+        ImGui.Spacing();
         ImGui.EndTabItem();
     }
 
@@ -287,10 +307,17 @@ public class MainWindow : Window, IDisposable
                 Configuration.Save();
             }
 
-            var hideInDutyOrCombat = Configuration.HidePartyListInDutyOrCombat;
-            if (ImGui.Checkbox("Hide Party List Overlay in Duty or Combat", ref hideInDutyOrCombat))
+            var hideInDuty = Configuration.HidePartyListInDuty;
+            if (ImGui.Checkbox("Hide Party List Overlay while in a duty", ref hideInDuty))
             {
-                Configuration.HidePartyListInDutyOrCombat = hideInDutyOrCombat;
+                Configuration.HidePartyListInDuty = hideInDuty;
+                Configuration.Save();
+            }
+
+            var hideInCombat = Configuration.HidePartyListInCombat;
+            if (ImGui.Checkbox("Hide Party List Overlay while in combat", ref hideInCombat))
+            {
+                Configuration.HidePartyListInCombat = hideInCombat;
                 Configuration.Save();
             }
 
@@ -487,7 +514,7 @@ public class MainWindow : Window, IDisposable
     // ─────────────────────────────────────────────────────────────────────────
     // About Tab
     // ─────────────────────────────────────────────────────────────────────────
-    private static void DrawAboutTab()
+    private void DrawAboutTab()
     {
         if (!ImGui.BeginTabItem("About"))
             return;
@@ -524,7 +551,25 @@ public class MainWindow : Window, IDisposable
 
         ImGui.TextWrapped(
             "Commands:\n" +
-            "  /pfcheck           – Toggle the main overlay / status window.\n");
+            "  /pfcheck           – Toggle the main overlay / status window.\n" +
+            "  /pcrparty           – Toggle the party list overlay window.\n");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), "Cache Statistics");
+        ImGui.Spacing();
+        ImGui.TextUnformatted($"Resolved CIDs:          {plugin.CidCache.Count}");
+        ImGui.TextUnformatted($"Blacklisted players:    {plugin.BlacklistCache.Count}");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Clear Cache##bl_clear"))
+        {
+            plugin.BlacklistCache.Clear();
+            plugin.PartyFinderManager.ForceRefreshBlacklist();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Clears the persisted blacklist cache, then re-reads from the game.");
 
         ImGui.Spacing();
         ImGui.EndTabItem();
