@@ -255,6 +255,15 @@ public class MainWindow : Window, IDisposable
             Configuration.Save();
         }
 
+        var showResolvedNames = Configuration.ShowResolvedPlayerNames;
+        if (ImGui.Checkbox("Show Resolved Player Names in Member Info Overlay", ref showResolvedNames))
+        {
+            Configuration.ShowResolvedPlayerNames = showResolvedNames;
+            Configuration.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When enabled, displays the actual player name (Name@World) once resolved, instead of \"Player X\".");
+
         var fflogsOverlay = Configuration.EnableFFLogsIntegrationOverlay;
         if (ImGui.Checkbox(
                 "Enable FFLogs Integration for High-End Duties (configure in FFLogs Integration tab)",

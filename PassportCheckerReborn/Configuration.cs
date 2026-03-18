@@ -40,6 +40,7 @@ public class Configuration : IPluginConfiguration
     public bool ShowMemberInfoOverlay { get; set; } = true;
     public bool OnlyShowOverlayForHighEndDuties { get; set; } = true;
     public bool ShowOverlayOnLeftSide { get; set; } = true;
+    public bool ShowResolvedPlayerNames { get; set; } = false;
     public bool EnableFFLogsIntegrationOverlay { get; set; } = false;
     public bool EnableTomestoneIntegration { get; set; } = true;
     public bool ShowPartyListOverlay { get; set; } = false;

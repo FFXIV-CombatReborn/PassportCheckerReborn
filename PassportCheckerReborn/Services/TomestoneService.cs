@@ -317,13 +317,16 @@ public sealed partial class TomestoneService : IDisposable
                 + $"&encounter={Uri.EscapeDataString(ep.Encounter)}";
 
             using var request = CreateAuthenticatedRequest(url);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] progression-graph status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
             var json = await response.Content.ReadAsStringAsync();
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] progression-graph response: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -354,13 +357,16 @@ public sealed partial class TomestoneService : IDisposable
                 + $"&encounter={Uri.EscapeDataString(ep.Encounter)}";
 
             using var request = CreateAuthenticatedRequest(url);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] activity status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
             var json = await response.Content.ReadAsStringAsync();
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] activity response: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -385,13 +391,16 @@ public sealed partial class TomestoneService : IDisposable
             var url = $"{ApiBaseUrl}/character/profile/{server}/{name}";
 
             using var request = CreateAuthenticatedRequest(url);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] profile status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
             var json = await response.Content.ReadAsStringAsync();
+            //PassportCheckerReborn.Log.Debug($"[TomestoneService] profile response: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -427,13 +436,16 @@ public sealed partial class TomestoneService : IDisposable
             var url = $"{ApiBaseUrl}/character/profile/{lodestoneId}?update=false";
 
             using var request = CreateAuthenticatedRequest(url);
+            PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
+            PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
             var json = await response.Content.ReadAsStringAsync();
+            PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile response: {json}");
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -694,6 +706,7 @@ public sealed partial class TomestoneService : IDisposable
         // Prefer precise slug matching when encounter params are known
         if (encounterParams != null)
         {
+            // Attempt 1: canonical field names (may be present in some response shapes)
             var matchesGroup = enc.TryGetProperty("encounterGroupCanonicalName", out var groupEl) &&
                 string.Equals(groupEl.GetString(), encounterParams.Zone, StringComparison.OrdinalIgnoreCase);
             var matchesExpansion = enc.TryGetProperty("expansionCanonicalName", out var expEl) &&
@@ -707,14 +720,30 @@ public sealed partial class TomestoneService : IDisposable
                     return true;
             }
 
+            // Attempt 2: slug the zoneName field (matches most encounter types, e.g. ultimates, extremes)
+            if (enc.TryGetProperty("zoneName", out var zoneNameEl))
+            {
+                var zoneSlug = BuildTomestoneSlug(zoneNameEl.GetString() ?? string.Empty);
+                if (string.Equals(zoneSlug, encounterParams.Encounter, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            // Attempt 3: slug the name field (multi-phase encounters like Lindwurm / Lindwurm II)
+            if (enc.TryGetProperty("name", out var encNameEl))
+            {
+                var nameSlug = BuildTomestoneSlug(encNameEl.GetString() ?? string.Empty);
+                if (string.Equals(nameSlug, encounterParams.Encounter, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
             return false;
         }
 
         // Fallback: match by zoneName when no encounter params are available
         if (!string.IsNullOrWhiteSpace(dutyName) &&
-            enc.TryGetProperty("zoneName", out var zoneNameEl))
+            enc.TryGetProperty("zoneName", out var zoneEl))
         {
-            var zoneName = zoneNameEl.GetString();
+            var zoneName = zoneEl.GetString();
             if (zoneName != null && zoneName.Equals(dutyName, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
