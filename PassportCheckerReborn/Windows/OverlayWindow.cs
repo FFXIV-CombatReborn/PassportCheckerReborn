@@ -162,34 +162,45 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
 
         if (cfg.EnableTomestoneIntegration)
         {
-            var tsDisabled = isResolving || tomestoneBatchInProgress;
-            var tsLabel = tomestoneBatchInProgress
-                ? "\u2026##ts_all"
-                : isResolving
-                    ? "Tomestone (resolving\u2026)##ts_all"
-                    : "Tomestone##ts_all";
-
-            if (tsDisabled)
+            if (string.IsNullOrEmpty(cfg.TomestoneApiKey))
+            {
                 ImGui.BeginDisabled();
-
-            if (ImGui.SmallButton(tsLabel) && !tsDisabled)
-            {
-                tomestoneBatchInProgress = true;
-                tomestoneFetched = true;
-                _ = FetchAllTomestoneInfoAsync(members);
-            }
-
-            if (tsDisabled)
+                ImGui.SmallButton("Tomestone API Key Needed##ts_all");
                 ImGui.EndDisabled();
-
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Configure your Tomestone API key in Settings \u2192 Tomestone Integration.");
+            }
+            else
             {
-                if (isResolving)
-                    ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
-                else if (tomestoneBatchInProgress)
-                    ImGui.SetTooltip("Looking up Tomestone data for all players\u2026");
-                else
-                    ImGui.SetTooltip("Look up Tomestone data for all players");
+                var tsDisabled = isResolving || tomestoneBatchInProgress;
+                var tsLabel = tomestoneBatchInProgress
+                    ? "\u2026##ts_all"
+                    : isResolving
+                        ? "Tomestone (resolving\u2026)##ts_all"
+                        : "Tomestone##ts_all";
+
+                if (tsDisabled)
+                    ImGui.BeginDisabled();
+
+                if (ImGui.SmallButton(tsLabel) && !tsDisabled)
+                {
+                    tomestoneBatchInProgress = true;
+                    tomestoneFetched = true;
+                    _ = FetchAllTomestoneInfoAsync(members);
+                }
+
+                if (tsDisabled)
+                    ImGui.EndDisabled();
+
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    if (isResolving)
+                        ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
+                    else if (tomestoneBatchInProgress)
+                        ImGui.SetTooltip("Looking up Tomestone data for all players\u2026");
+                    else
+                        ImGui.SetTooltip("Look up Tomestone data for all players");
+                }
             }
 
             ImGui.SameLine();
@@ -197,34 +208,45 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
 
         if (cfg.EnableFFLogsIntegrationOverlay)
         {
-            var ffDisabled = isResolving || fflogsBatchInProgress;
-            var ffLabel = fflogsBatchInProgress
-                ? "\u2026##ff_all"
-                : isResolving
-                    ? "FFLogs (resolving\u2026)##ff_all"
-                    : "FFLogs##ff_all";
-
-            if (ffDisabled)
+            if (string.IsNullOrEmpty(cfg.FFLogsClientId) || string.IsNullOrEmpty(cfg.FFLogsClientSecret))
+            {
                 ImGui.BeginDisabled();
-
-            if (ImGui.SmallButton(ffLabel) && !ffDisabled)
-            {
-                fflogsBatchInProgress = true;
-                fflogsFetched = true;
-                _ = FetchAllFFLogsDataAsync(members);
-            }
-
-            if (ffDisabled)
+                ImGui.SmallButton("FFLogs API Key Needed##ff_all");
                 ImGui.EndDisabled();
-
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Configure your FFLogs credentials in Settings \u2192 FFLogs Integration.");
+            }
+            else
             {
-                if (isResolving)
-                    ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
-                else if (fflogsBatchInProgress)
-                    ImGui.SetTooltip("Looking up FFLogs data for all players\u2026");
-                else
-                    ImGui.SetTooltip("Look up FFLogs data for all players");
+                var ffDisabled = isResolving || fflogsBatchInProgress;
+                var ffLabel = fflogsBatchInProgress
+                    ? "\u2026##ff_all"
+                    : isResolving
+                        ? "FFLogs (resolving\u2026)##ff_all"
+                        : "FFLogs##ff_all";
+
+                if (ffDisabled)
+                    ImGui.BeginDisabled();
+
+                if (ImGui.SmallButton(ffLabel) && !ffDisabled)
+                {
+                    fflogsBatchInProgress = true;
+                    fflogsFetched = true;
+                    _ = FetchAllFFLogsDataAsync(members);
+                }
+
+                if (ffDisabled)
+                    ImGui.EndDisabled();
+
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    if (isResolving)
+                        ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
+                    else if (fflogsBatchInProgress)
+                        ImGui.SetTooltip("Looking up FFLogs data for all players\u2026");
+                    else
+                        ImGui.SetTooltip("Look up FFLogs data for all players");
+                }
             }
         }
     }
@@ -312,7 +334,7 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
         }
 
         // ── Cached Tomestone data
-        if (cfg.EnableTomestoneIntegration && tomestoneFetched)
+        if (cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey) && tomestoneFetched)
         {
             if (tomestoneBatchInProgress)
             {
@@ -363,7 +385,7 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
         }
 
         // ── Cached FFLogs encounter data (only shown after user clicks FFLogs button) ──
-        if (cfg.EnableFFLogsIntegrationOverlay && fflogsFetched)
+        if (cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret) && fflogsFetched)
         {
             if (fflogsBatchInProgress)
             {

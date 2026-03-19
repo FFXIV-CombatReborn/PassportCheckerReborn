@@ -292,7 +292,7 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         ImGui.TextUnformatted(displayName);
 
         // ── Cached FFLogs data ──────────────────────────────────────────────
-        if (cfg.EnableFFLogsIntegrationOverlay && fflogsCache.TryGetValue(index, out var cachedFf))
+        if (cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret) && fflogsCache.TryGetValue(index, out var cachedFf))
         {
             ImGui.SameLine();
             if (cachedFf is null || !cachedFf.HasData)
@@ -335,7 +335,7 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         }
 
         // ── Cached Tomestone data ───────────────────────────────────────────
-        if (cfg.EnableTomestoneIntegration && tomestoneCache.TryGetValue(index, out var cachedTs))
+        if (cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey) && tomestoneCache.TryGetValue(index, out var cachedTs))
         {
             ImGui.SameLine();
             if (cachedTs != null)
@@ -544,13 +544,13 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
     {
         if (members.Count == 0) return;
 
-        if (cfg.EnableFFLogsIntegrationOverlay)
+        if (cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret))
         {
             fflogsBatchInProgress = true;
             _ = FetchFFLogsDataAsync(members);
         }
 
-        if (cfg.EnableTomestoneIntegration)
+        if (cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey))
         {
             tomestoneBatchInProgress = true;
             _ = FetchTomestoneDataAsync(members);
