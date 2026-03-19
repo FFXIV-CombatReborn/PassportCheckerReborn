@@ -266,7 +266,7 @@ public class MainWindow : Window, IDisposable
 
         var fflogsOverlay = Configuration.EnableFFLogsIntegrationOverlay;
         if (ImGui.Checkbox(
-                "Enable FFLogs Integration for High-End Duties (configure in FFLogs Integration tab)",
+                "Enable FFLogs Integration (configure in FFLogs Integration tab)",
                 ref fflogsOverlay))
         {
             Configuration.EnableFFLogsIntegrationOverlay = fflogsOverlay;
@@ -275,7 +275,7 @@ public class MainWindow : Window, IDisposable
 
         var tomestone = Configuration.EnableTomestoneIntegration;
         if (ImGui.Checkbox(
-                "Tomestone Integration (configure API key in Tomestone Integration tab)",
+                "Enable Tomestone Integration (configure API key in Tomestone Integration tab)",
                 ref tomestone))
         {
             Configuration.EnableTomestoneIntegration = tomestone;
