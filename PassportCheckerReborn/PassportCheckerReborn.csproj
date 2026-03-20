@@ -21,9 +21,6 @@
 	<NoWarn>1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="Data\premade_cid_cache.json" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="ECommons" Version="3.1.0.29" />
   </ItemGroup>
 
@@ -46,15 +43,11 @@
 	<Using Include="Newtonsoft.Json" />
   </ItemGroup>
 
-  <ItemGroup>
-	<EmbeddedResource Include="Data\premade_cid_cache.json" />
-  </ItemGroup>
-
     <!-- Prune unwanted DLLs from output -->
     <Target Name="PruneOutputDlls" AfterTargets="ResolveReferences">
         <ItemGroup>
             <!-- Keep only these DLLs in the copy-local list -->
-            <_KeepDlls Include="@(ReferenceCopyLocalPaths)" Condition="&#xD;&#xA;	'%(Filename)' == 'PassportCheckerReborn' or&#xD;&#xA;	'%(Filename)' == 'ECommons' or&#xD;&#xA;	'%(Filename)' == 'premade_cid_cache'&#xD;&#xA;" />
+            <_KeepDlls Include="@(ReferenceCopyLocalPaths)" Condition="&#xD;&#xA;	'%(Filename)' == 'PassportCheckerReborn' or&#xD;&#xA;	'%(Filename)' == 'ECommons'&#xD;&#xA;" />
             <!-- Remove everything else -->
             <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="!('%(Filename)' == 'PassportCheckerReborn' or '%(Filename)' == 'ECommons')" />
             <!-- Re-add only the kept set -->
