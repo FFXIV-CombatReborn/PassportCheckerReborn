@@ -508,7 +508,7 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
                     if (cachedFf.BestParse.HasValue)
                     {
                         var color = GetParseColor(cachedFf.BestParse.Value);
-                        ImGui.TextColored(color, $" Best parse {cachedFf.BestParse.Value:F1}%");
+                        ImGui.TextColored(color, $" Average overall parse {cachedFf.BestParse.Value:F1}%");
                     }
                     else
                     {
