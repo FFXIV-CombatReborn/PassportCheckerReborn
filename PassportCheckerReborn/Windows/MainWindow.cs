@@ -127,14 +127,12 @@ public class MainWindow : Window, IDisposable
             Configuration.Save();
         }
 
-        ImGui.BeginDisabled();
         var preventAutoClose = Configuration.PreventAutoClosingOnPartyChanges;
         if (ImGui.Checkbox("Prevent Party Finder Window from Auto-Closing on Party Changes", ref preventAutoClose))
         {
             Configuration.PreventAutoClosingOnPartyChanges = preventAutoClose;
             Configuration.Save();
         }
-        ImGui.EndDisabled();
 
         ImGui.Spacing();
         ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.0f, 1.0f), "Party Finder List Optimizations");
