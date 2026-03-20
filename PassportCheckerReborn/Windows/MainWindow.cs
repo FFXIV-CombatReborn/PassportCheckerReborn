@@ -567,7 +567,6 @@ public class MainWindow : Window, IDisposable
 
         ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), "Cache Statistics");
         ImGui.Spacing();
-        ImGui.TextUnformatted($"Premade CIDs:           {plugin.PremadeCidCache.Count}");
         ImGui.TextUnformatted($"Resolved CIDs:          {plugin.CidCache.Count}");
         ImGui.TextUnformatted($"Blacklisted players:    {plugin.BlacklistCache.Count}");
         ImGui.SameLine();

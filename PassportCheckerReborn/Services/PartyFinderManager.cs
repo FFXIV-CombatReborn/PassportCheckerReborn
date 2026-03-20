@@ -504,15 +504,6 @@ public sealed class PartyFinderManager : IDisposable
         if (contentId == 0)
             return null;
 
-        // Check the premade (plugin-bundled) CID list first. This ships with the
-        // plugin and is updated together with plugin releases, providing instant
-        // lookups for well-known players.
-        if (plugin.PremadeCidCache.TryGet(contentId, out var premade) && premade != null
-            && !string.IsNullOrEmpty(premade.Name))
-        {
-            return (premade.Name, premade.WorldName);
-        }
-
         // Prefer the in-memory PF listing cache (always fresh from network packets).
         if (pfListingPlayerCache.TryGetValue(contentId, out var cached))
         {
