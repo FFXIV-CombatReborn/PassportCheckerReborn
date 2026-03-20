@@ -45,6 +45,7 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
     internal TomestoneService TomestoneService { get; init; }
     internal FFLogsService FFLogsService { get; init; }
     internal CidCache CidCache { get; init; }
+    internal PremadeCidCache PremadeCidCache { get; init; }
     internal BlacklistCache BlacklistCache { get; init; }
     internal PartyFinderManager PartyFinderManager { get; init; }
 
@@ -55,6 +56,7 @@ public sealed class PassportCheckerReborn : IDalamudPlugin
         TomestoneService = new TomestoneService(this);
         FFLogsService = new FFLogsService(this);
         CidCache = new CidCache();
+        PremadeCidCache = new PremadeCidCache();
         BlacklistCache = new BlacklistCache();
         PartyFinderManager = new PartyFinderManager(this);
 
