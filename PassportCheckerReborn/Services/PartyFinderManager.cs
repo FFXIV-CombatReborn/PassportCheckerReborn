@@ -1,9 +1,3 @@
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Timers;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Gui.PartyFinder.Types;
@@ -17,6 +11,12 @@ using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Timers;
 
 namespace PassportCheckerReborn.Services;
 
@@ -279,7 +279,7 @@ public sealed class PartyFinderManager : IDisposable
         }
         catch (Exception)
         {
-           //PassportCheckerReborn.Log.Warning(ex, "[PartyFinderManager] Failed to hook AtkUnitBase.Close.");
+            //PassportCheckerReborn.Log.Warning(ex, "[PartyFinderManager] Failed to hook AtkUnitBase.Close.");
         }
 
         // ── Track party member count (initial snapshot for close-suppression) ──
@@ -1149,7 +1149,6 @@ public sealed class PartyFinderManager : IDisposable
         {
             if (currentDetailedPost is not { } post)
             {
-                PopulateStubMembers();
                 return;
             }
 
@@ -1193,14 +1192,13 @@ public sealed class PartyFinderManager : IDisposable
             }
             else
             {
-                PopulateStubMembers();
+
             }
         }
         catch (Exception ex)
         {
             PassportCheckerReborn.Log.Warning(ex,
-                "[PartyFinderManager] Failed to read member data, using stub members.");
-            PopulateStubMembers();
+                "[PartyFinderManager] Failed to read member data.");
         }
     }
 
@@ -1216,16 +1214,6 @@ public sealed class PartyFinderManager : IDisposable
                 return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// Inserts synthetic members so the overlay is visible during development
-    /// when the game client is not running.
-    /// </summary>
-    private void PopulateStubMembers()
-    {
-        currentMembers.Clear();
-        currentMembers.Add(new Windows.PartyMemberInfo("Ehl'tee Es", "Kraken", "SCH"));
     }
 
     /// <summary>Manually refresh the member list (e.g. on overlay open).</summary>
