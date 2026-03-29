@@ -68,8 +68,8 @@ public class MainWindow : Window, IDisposable
         tomestoneApiKeyInput = Configuration.TomestoneApiKey;
     }
 
-    public void Dispose() 
-    { 
+    public void Dispose()
+    {
         GC.SuppressFinalize(this);
     }
 

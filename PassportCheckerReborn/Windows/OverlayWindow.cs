@@ -1,12 +1,12 @@
+using Dalamud.Interface.Textures;
+using Dalamud.Interface.Windowing;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using PassportCheckerReborn.Services;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using System.Threading.Tasks;
-using Dalamud.Interface.Textures;
-using Dalamud.Interface.Windowing;
-using FFXIVClientStructs.FFXIV.Component.GUI;
-using PassportCheckerReborn.Services;
 
 namespace PassportCheckerReborn.Windows;
 
@@ -730,7 +730,7 @@ public class OverlayWindow(PassportCheckerReborn plugin) : Window("PF Member Inf
         >= 75 => new Vector4(0.635f, 0.282f, 0.808f, 1.0f),  // Purple (75-94)
         >= 50 => new Vector4(0.118f, 0.392f, 1.000f, 1.0f),  // Blue (50-74)
         >= 25 => new Vector4(0.118f, 0.784f, 0.118f, 1.0f),  // Green (25-49)
-        _     => new Vector4(0.600f, 0.600f, 0.600f, 1.0f),  // Grey (<25)
+        _ => new Vector4(0.600f, 0.600f, 0.600f, 1.0f),  // Grey (<25)
     };
 
     /// <summary>

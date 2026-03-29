@@ -75,7 +75,7 @@ public sealed class BlacklistCache : IDisposable
         foreach (var key in keys)
         {
             var atIndex = key.IndexOf('@');
-            var name  = atIndex >= 0 ? key[..atIndex]       : key;
+            var name = atIndex >= 0 ? key[..atIndex] : key;
             var world = atIndex >= 0 ? key[(atIndex + 1)..] : string.Empty;
             entries[key] = new BlacklistCacheEntry(name, world, DateTime.UtcNow);
         }

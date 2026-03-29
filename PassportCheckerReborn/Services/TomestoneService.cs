@@ -127,10 +127,10 @@ public sealed partial class TomestoneService : IDisposable
     /// </summary>
     private static readonly Dictionary<string, TomestoneEncounterParams> MultiPartDutyToTomestoneParams =
         new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["AAC Heavyweight M4 (Savage)"] =
+        {
+            ["AAC Heavyweight M4 (Savage)"] =
             new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
-    };
+        };
 
     /// <summary>
     /// Returns all duty names that have Tomestone encounter mappings.

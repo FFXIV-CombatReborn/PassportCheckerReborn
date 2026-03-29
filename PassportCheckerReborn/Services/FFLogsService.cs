@@ -29,8 +29,8 @@ public sealed class FFLogsService : IDisposable
     private readonly PassportCheckerReborn plugin;
     private readonly HttpClient httpClient;
 
-    private const string TokenUrl  = "https://www.fflogs.com/oauth/token";
-    private const string ApiUrl    = "https://www.fflogs.com/api/v2/client";
+    private const string TokenUrl = "https://www.fflogs.com/oauth/token";
+    private const string ApiUrl = "https://www.fflogs.com/api/v2/client";
 
     private string? cachedToken;
     private DateTime tokenExpiry = DateTime.MinValue;
@@ -1013,34 +1013,34 @@ public sealed class FFLogsService : IDisposable
     /// <summary>Maps FFXIV job abbreviations to FFLogs spec names.</summary>
     private static readonly Dictionary<string, string> JobAbbrevToSpec = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["PLD"] = "Paladin",       ["WAR"] = "Warrior",       ["DRK"] = "DarkKnight",    ["GNB"] = "Gunbreaker",
-        ["WHM"] = "WhiteMage",     ["SCH"] = "Scholar",       ["AST"] = "Astrologian",   ["SGE"] = "Sage",
-        ["MNK"] = "Monk",          ["DRG"] = "Dragoon",       ["NIN"] = "Ninja",         ["SAM"] = "Samurai",
-        ["RPR"] = "Reaper",        ["VPR"] = "Viper",
-        ["BRD"] = "Bard",          ["MCH"] = "Machinist",     ["DNC"] = "Dancer",
-        ["BLM"] = "BlackMage",     ["SMN"] = "Summoner",      ["RDM"] = "RedMage",       ["PCT"] = "Pictomancer",
+        ["PLD"] = "Paladin", ["WAR"] = "Warrior", ["DRK"] = "DarkKnight", ["GNB"] = "Gunbreaker",
+        ["WHM"] = "WhiteMage", ["SCH"] = "Scholar", ["AST"] = "Astrologian", ["SGE"] = "Sage",
+        ["MNK"] = "Monk", ["DRG"] = "Dragoon", ["NIN"] = "Ninja", ["SAM"] = "Samurai",
+        ["RPR"] = "Reaper", ["VPR"] = "Viper",
+        ["BRD"] = "Bard", ["MCH"] = "Machinist", ["DNC"] = "Dancer",
+        ["BLM"] = "BlackMage", ["SMN"] = "Summoner", ["RDM"] = "RedMage", ["PCT"] = "Pictomancer",
     };
 
     /// <summary>Maps FFLogs spec names to FFXIV job abbreviations.</summary>
     private static readonly Dictionary<string, string> SpecToJobAbbrev = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Paladin"]       = "PLD", ["Warrior"]       = "WAR", ["DarkKnight"]    = "DRK", ["Gunbreaker"]    = "GNB",
-        ["WhiteMage"]     = "WHM", ["Scholar"]       = "SCH", ["Astrologian"]   = "AST", ["Sage"]          = "SGE",
-        ["Monk"]          = "MNK", ["Dragoon"]       = "DRG", ["Ninja"]         = "NIN", ["Samurai"]       = "SAM",
-        ["Reaper"]        = "RPR", ["Viper"]         = "VPR",
-        ["Bard"]          = "BRD", ["Machinist"]     = "MCH", ["Dancer"]        = "DNC",
-        ["BlackMage"]     = "BLM", ["Summoner"]      = "SMN", ["RedMage"]       = "RDM", ["Pictomancer"]   = "PCT",
+        ["Paladin"] = "PLD", ["Warrior"] = "WAR", ["DarkKnight"] = "DRK", ["Gunbreaker"] = "GNB",
+        ["WhiteMage"] = "WHM", ["Scholar"] = "SCH", ["Astrologian"] = "AST", ["Sage"] = "SGE",
+        ["Monk"] = "MNK", ["Dragoon"] = "DRG", ["Ninja"] = "NIN", ["Samurai"] = "SAM",
+        ["Reaper"] = "RPR", ["Viper"] = "VPR",
+        ["Bard"] = "BRD", ["Machinist"] = "MCH", ["Dancer"] = "DNC",
+        ["BlackMage"] = "BLM", ["Summoner"] = "SMN", ["RedMage"] = "RDM", ["Pictomancer"] = "PCT",
     };
 
     /// <summary>Maps FFLogs spec names to FFXIV game icon IDs (62100 + ClassJob RowId).</summary>
     private static readonly Dictionary<string, uint> SpecToJobIconId = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Paladin"]       = 62119, ["Warrior"]       = 62121, ["DarkKnight"]    = 62132, ["Gunbreaker"]    = 62137,
-        ["WhiteMage"]     = 62124, ["Scholar"]       = 62128, ["Astrologian"]   = 62133, ["Sage"]          = 62140,
-        ["Monk"]          = 62120, ["Dragoon"]       = 62122, ["Ninja"]         = 62130, ["Samurai"]       = 62134,
-        ["Reaper"]        = 62139, ["Viper"]         = 62141,
-        ["Bard"]          = 62123, ["Machinist"]     = 62131, ["Dancer"]        = 62138,
-        ["BlackMage"]     = 62125, ["Summoner"]      = 62127, ["RedMage"]       = 62135, ["Pictomancer"]   = 62142,
+        ["Paladin"] = 62119, ["Warrior"] = 62121, ["DarkKnight"] = 62132, ["Gunbreaker"] = 62137,
+        ["WhiteMage"] = 62124, ["Scholar"] = 62128, ["Astrologian"] = 62133, ["Sage"] = 62140,
+        ["Monk"] = 62120, ["Dragoon"] = 62122, ["Ninja"] = 62130, ["Samurai"] = 62134,
+        ["Reaper"] = 62139, ["Viper"] = 62141,
+        ["Bard"] = 62123, ["Machinist"] = 62131, ["Dancer"] = 62138,
+        ["BlackMage"] = 62125, ["Summoner"] = 62127, ["RedMage"] = 62135, ["Pictomancer"] = 62142,
     };
 
     /// <summary>
