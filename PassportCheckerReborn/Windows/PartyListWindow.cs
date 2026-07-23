@@ -409,51 +409,114 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
     {
         if (cachedFf is null || !cachedFf.HasData)
         {
-            if (cachedFf?.AverageParsePercent.HasValue == true)
+            PFWindow.DrawNoLogsWithAverage(cachedFf?.AverageParsePercent);
+        }
+        else if (cachedFf.IsEncounterSpecific)
+        {
+            var hasMultiPhaseData = cachedFf.Phase1TotalKills.HasValue ||
+                                    cachedFf.Phase2TotalKills.HasValue ||
+                                    cachedFf.Phase1BestParse.HasValue ||
+                                    cachedFf.Phase2BestParse.HasValue ||
+                                    cachedFf.Phase2LowestBossHpPct.HasValue;
+
+            if (hasMultiPhaseData)
             {
-                var avgColor = PFWindow.GetParseColor(cachedFf.AverageParsePercent.Value);
-                ImGui.TextColored(avgColor, $"Avg: {cachedFf.AverageParsePercent.Value:F0}%");
+                var p1Parse = cachedFf.Phase1BestParse;
+                var p2Parse = cachedFf.Phase2BestParse;
+
+                if (cachedFf.TotalKills > 0 && p1Parse.HasValue && p2Parse.HasValue)
+                {
+                    if (cachedFf.CurrentJobBestParse.HasValue)
+                    {
+                        ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
+                            $"Cleared {cachedFf.TotalKills}x");
+                        ImGui.SameLine();
+                        ImGui.TextUnformatted("P1");
+                        ImGui.SameLine();
+                        ImGui.TextColored(PFWindow.GetParseColor(p1Parse.Value), $"{p1Parse.Value:F0}%");
+                        ImGui.SameLine();
+                        ImGui.TextUnformatted("P2");
+                        ImGui.SameLine();
+                        ImGui.TextColored(PFWindow.GetParseColor(p2Parse.Value), $"{p2Parse.Value:F0}%");
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+                            $"Cleared {cachedFf.TotalKills}x P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%");
+                    }
+
+                    PFWindow.DrawBestParseOnDifferentJob(cachedFf, member);
+                }
+                else
+                {
+                    if (p1Parse.HasValue)
+                    {
+                        ImGui.TextColored(PFWindow.GetParseColor(p1Parse.Value), $"P1 {p1Parse.Value:F0}%");
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "P1 No logs");
+                    }
+
+                    ImGui.SameLine();
+
+                    if (cachedFf.Phase2LowestBossHpPct.HasValue)
+                    {
+                        ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f),
+                            $"P2 {cachedFf.Phase2LowestBossHpPct.Value:F0}%");
+                    }
+                    else if (p2Parse.HasValue)
+                    {
+                        ImGui.TextColored(PFWindow.GetParseColor(p2Parse.Value), $"P2 {p2Parse.Value:F0}%");
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "P2 No logs");
+                    }
+
+                    PFWindow.DrawBestParseOnDifferentJob(cachedFf, member);
+                }
+            }
+            else if (cachedFf.TotalKills > 0)
+            {
+                if (cachedFf.CurrentJobBestParse.HasValue)
+                {
+                    ImGui.TextColored(PFWindow.GetParseColor(cachedFf.CurrentJobBestParse.Value),
+                        $"Cleared {cachedFf.TotalKills}x {cachedFf.CurrentJobBestParse.Value:F0}%");
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+                        $"Cleared {cachedFf.TotalKills}x No Current Job Logs");
+                }
+
+                PFWindow.DrawBestParseOnDifferentJob(cachedFf, member);
+            }
+            else if (cachedFf.LowestBossHpPct.HasValue)
+            {
+                ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f),
+                    $"{cachedFf.LowestBossHpPct.Value:F0}%");
+            }
+            else if (cachedFf.AverageParsePercent.HasValue)
+            {
+                PFWindow.DrawNoLogsWithAverage(cachedFf.AverageParsePercent);
             }
             else
             {
                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No logs");
             }
-            return;
-        }
-
-        if (cachedFf.BestParse.HasValue)
-        {
-            // Show best parse for current job
-            if (cachedFf.CurrentJobBestParse.HasValue)
-            {
-                var color = PFWindow.GetParseColor(cachedFf.CurrentJobBestParse.Value);
-                ImGui.TextColored(color, $"{cachedFf.CurrentJobBestParse.Value:F0}%");
-            }
-            else
-            {
-                var color = PFWindow.GetParseColor(cachedFf.BestParse.Value);
-                ImGui.TextColored(color, $"{cachedFf.BestParse.Value:F0}%");
-            }
-
-            // If best parse is on a different job, show it on a new line
-            if (cachedFf.BestParseJobAbbreviation != null &&
-                !string.Equals(cachedFf.BestParseJobAbbreviation, member.JobAbbreviation,
-                    StringComparison.OrdinalIgnoreCase) &&
-                (!cachedFf.CurrentJobBestParse.HasValue ||
-                 cachedFf.BestParse.Value > cachedFf.CurrentJobBestParse.Value))
-            {
-                var bestColor = PFWindow.GetParseColor(cachedFf.BestParse.Value);
-                ImGui.TextColored(bestColor, $"({cachedFf.BestParseJobAbbreviation}: {cachedFf.BestParse.Value:F0}%)");
-            }
-        }
-        else if (cachedFf.AverageParsePercent.HasValue)
-        {
-            var avgColor = PFWindow.GetParseColor(cachedFf.AverageParsePercent.Value);
-            ImGui.TextColored(avgColor, $"Avg: {cachedFf.AverageParsePercent.Value:F0}%");
         }
         else
         {
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No logs");
+            if (cachedFf.BestParse.HasValue)
+            {
+                ImGui.TextColored(PFWindow.GetParseColor(cachedFf.BestParse.Value),
+                    $"Average overall parse {cachedFf.BestParse.Value:F1}%");
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "N/A");
+            }
         }
     }
 
