@@ -530,7 +530,7 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                                 if (cachedFf.CurrentJobBestParse.HasValue)
                                 {
                                     ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
-                                        $"Cleared {cachedFf.TotalKills}X");
+                                        $"Cleared {cachedFf.TotalKills}x");
                                     ImGui.SameLine();
                                     ImGui.TextUnformatted("P1");
                                     ImGui.SameLine();
@@ -543,7 +543,7 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                                 else
                                 {
                                     ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-                                        $"Cleared {cachedFf.TotalKills}X P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%");
+                                        $"Cleared {cachedFf.TotalKills}x P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%");
                                 }
 
                                 DrawBestParseOnDifferentJob(cachedFf, member);
@@ -583,12 +583,12 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                             if (cachedFf.CurrentJobBestParse.HasValue)
                             {
                                 ImGui.TextColored(GetParseColor(cachedFf.CurrentJobBestParse.Value),
-                                    $"Cleared {cachedFf.TotalKills}X {cachedFf.CurrentJobBestParse.Value:F0}%");
+                                    $"Cleared {cachedFf.TotalKills}x {cachedFf.CurrentJobBestParse.Value:F0}%");
                             }
                             else
                             {
                                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-                                    $"Cleared {cachedFf.TotalKills}X No Current Job Logs");
+                                    $"Cleared {cachedFf.TotalKills}x No Current Job Logs");
                             }
 
                             DrawBestParseOnDifferentJob(cachedFf, member);
@@ -895,7 +895,7 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
     /// draws it on a new line with the job icon. Does nothing when the current job
     /// IS the best job (no redundant display).
     /// </summary>
-    private static void DrawBestParseOnDifferentJob(EncounterParseResult cachedFf, PartyMemberInfo member)
+    internal static void DrawBestParseOnDifferentJob(EncounterParseResult cachedFf, PartyMemberInfo member)
     {
         if (!cachedFf.BestParse.HasValue || cachedFf.BestParseJobAbbreviation == null)
         {
