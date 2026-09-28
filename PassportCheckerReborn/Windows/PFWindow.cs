@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using System.Threading.Tasks;
-using Dalamud.Interface.Textures;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Services;
+using PassportCheckerReborn.UI;
 
 namespace PassportCheckerReborn.Windows;
 
@@ -46,13 +46,23 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
     // Cached size of this overlay window from the previous frame, used for clamping in PreDraw
     private Vector2 lastWindowSize = new(300f, 200f);
 
+    private M3Style.Scope? theme;
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);
     }
 
+    public override void PostDraw()
+    {
+        theme?.Dispose();
+        theme = null;
+    }
+
     public override unsafe void PreDraw()
     {
+        theme = M3Style.Push(compact: true);
+
         // Position this window to the left or right of the PF Details addon.
         //
         // Uses GameGui.GetAddonByName to find the LookingForGroupDetail addon,
@@ -143,21 +153,21 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                 (plugin.PartyFinderManager.CurrentDutyId > 0 ||
                  !string.IsNullOrEmpty(plugin.PartyFinderManager.CurrentDutyName)))
             {
-                ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "Not a high-end duty.");
+                OverlayWidgets.EmptyState(FontAwesomeIcon.Filter, "Not a high-end duty.");
                 return;
             }
         }
 
         var members = plugin.PartyFinderManager.CurrentMembers;
+        var dutyName = plugin.PartyFinderManager.CurrentDutyName;
 
-        ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"PF Member Info - {plugin.PartyFinderManager.CurrentDutyName}");
-        ImGui.Separator();
-        ImGui.Spacing();
+        OverlayWidgets.Header(FontAwesomeIcon.Users, "Member Info", string.IsNullOrWhiteSpace(dutyName) ? null : dutyName);
+        ImGui.Dummy(new Vector2(0f, M3.Space1));
 
         if (members.Count == 0)
         {
-            ImGui.TextUnformatted("No party finder listing selected.");
-            ImGui.TextUnformatted("Open a PF detail window to see member info.");
+            OverlayWidgets.EmptyState(FontAwesomeIcon.Search, "No party finder listing selected.",
+                "Open a PF detail window to see member info.");
             return;
         }
 
@@ -166,9 +176,8 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         var hasFFLogs = cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret);
 
         var columnCount = 1 + (hasTomestone ? 1 : 0) + (hasFFLogs ? 1 : 0);
-        var tableFlags = ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoHostExtendX;
 
-        if (ImGui.BeginTable("##members_table", columnCount, tableFlags))
+        if (ImGui.BeginTable("##members_table", columnCount, OverlayWidgets.TableFlags))
         {
             ImGui.TableSetupColumn("Player", ImGuiTableColumnFlags.WidthFixed);
             if (hasTomestone)
@@ -181,7 +190,17 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                 ImGui.TableSetupColumn("FFLogs", ImGuiTableColumnFlags.WidthFixed);
             }
 
-            ImGui.TableHeadersRow();
+            OverlayWidgets.BeginHeaderRow();
+            OverlayWidgets.HeaderCell("Player");
+            if (hasTomestone)
+            {
+                OverlayWidgets.HeaderCell("Tomestone");
+            }
+
+            if (hasFFLogs)
+            {
+                OverlayWidgets.HeaderCell("FFLogs");
+            }
 
             for (var i = 0; i < members.Count; i++)
             {
@@ -193,134 +212,82 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         }
 
         // ── Shared Tomestone / FFLogs buttons below all rows ────────────────
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        var isResolving = plugin.PartyFinderManager.HasUnresolvedMembers;
-
-        if (cfg.EnableTomestoneIntegration)
+        if (cfg.EnableTomestoneIntegration || cfg.EnableFFLogsIntegrationOverlay)
         {
-            if (string.IsNullOrEmpty(cfg.TomestoneApiKey))
-            {
-                ImGui.BeginDisabled();
-                ImGui.SmallButton("Tomestone API Key Needed##ts_all");
-                ImGui.EndDisabled();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                {
-                    ImGui.SetTooltip("Configure your Tomestone API key in Settings \u2192 Tomestone Integration.");
-                }
-            }
-            else
-            {
-                var tsDisabled = isResolving || tomestoneBatchInProgress;
-                var tsLabel = tomestoneBatchInProgress
-                    ? "\u2026##ts_all"
-                    : isResolving
-                        ? "Tomestone (resolving\u2026)##ts_all"
-                        : "Tomestone##ts_all";
-
-                if (tsDisabled)
-                {
-                    ImGui.BeginDisabled();
-                }
-
-                if (ImGui.SmallButton(tsLabel) && !tsDisabled)
-                {
-                    tomestoneBatchInProgress = true;
-                    tomestoneFetched = true;
-                    _ = FetchAllTomestoneInfoAsync(members);
-                }
-
-                if (tsDisabled)
-                {
-                    ImGui.EndDisabled();
-                }
-
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                {
-                    if (isResolving)
-                    {
-                        ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
-                    }
-                    else if (tomestoneBatchInProgress)
-                    {
-                        ImGui.SetTooltip("Looking up Tomestone data for all players\u2026");
-                    }
-                    else
-                    {
-                        ImGui.SetTooltip("Look up Tomestone data for all players");
-                    }
-                }
-            }
-
-            ImGui.SameLine();
-        }
-
-        if (cfg.EnableFFLogsIntegrationOverlay)
-        {
-            if (string.IsNullOrEmpty(cfg.FFLogsClientId) || string.IsNullOrEmpty(cfg.FFLogsClientSecret))
-            {
-                ImGui.BeginDisabled();
-                ImGui.SmallButton("FFLogs API Key Needed##ff_all");
-                ImGui.EndDisabled();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                {
-                    ImGui.SetTooltip("Configure your FFLogs credentials in Settings \u2192 FFLogs Integration.");
-                }
-            }
-            else
-            {
-                var ffDisabled = isResolving || fflogsBatchInProgress;
-                var ffLabel = fflogsBatchInProgress
-                    ? "\u2026##ff_all"
-                    : isResolving
-                        ? "FFLogs (resolving\u2026)##ff_all"
-                        : "FFLogs##ff_all";
-
-                if (ffDisabled)
-                {
-                    ImGui.BeginDisabled();
-                }
-
-                if (ImGui.SmallButton(ffLabel) && !ffDisabled)
-                {
-                    fflogsBatchInProgress = true;
-                    fflogsFetched = true;
-                    _ = FetchAllFFLogsDataAsync(members);
-                }
-
-                if (ffDisabled)
-                {
-                    ImGui.EndDisabled();
-                }
-
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                {
-                    if (isResolving)
-                    {
-                        ImGui.SetTooltip("Waiting for player names to be resolved\u2026");
-                    }
-                    else if (fflogsBatchInProgress)
-                    {
-                        ImGui.SetTooltip("Looking up FFLogs data for all players\u2026");
-                    }
-                    else
-                    {
-                        ImGui.SetTooltip("Look up FFLogs data for all players");
-                    }
-                }
-            }
+            ImGui.Dummy(new Vector2(0f, M3.Space1));
+            DrawLookupButtons(members, cfg);
         }
 
         // Capture this frame's window size for use in PreDraw() clamping next frame
         lastWindowSize = ImGui.GetWindowSize();
     }
 
+    /// <summary>The batch lookup buttons, one per enabled integration.</summary>
+    private void DrawLookupButtons(IReadOnlyList<PartyMemberInfo> members, Configuration cfg)
+    {
+        var isResolving = plugin.PartyFinderManager.HasUnresolvedMembers;
+
+        if (cfg.EnableTomestoneIntegration)
+        {
+            var hasKey = !string.IsNullOrEmpty(cfg.TomestoneApiKey);
+            if (LookupButton("##ts_all", "Tomestone", hasKey, "Tomestone API Key Needed", isResolving, tomestoneBatchInProgress))
+            {
+                tomestoneBatchInProgress = true;
+                tomestoneFetched = true;
+                _ = FetchAllTomestoneInfoAsync(members);
+            }
+
+            ImguiTooltips.HoveredTooltip(!hasKey
+                ? "Add your Tomestone API key in Settings → Tomestone."
+                : LookupTooltip("Tomestone", isResolving, tomestoneBatchInProgress));
+
+            if (cfg.EnableFFLogsIntegrationOverlay)
+            {
+                ImGui.SameLine(0f, M3.Space2);
+            }
+        }
+
+        if (cfg.EnableFFLogsIntegrationOverlay)
+        {
+            var hasCredentials = !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret);
+            if (LookupButton("##ff_all", "FFLogs", hasCredentials, "FFLogs API Key Needed", isResolving, fflogsBatchInProgress))
+            {
+                fflogsBatchInProgress = true;
+                fflogsFetched = true;
+                _ = FetchAllFFLogsDataAsync(members);
+            }
+
+            ImguiTooltips.HoveredTooltip(!hasCredentials
+                ? "Add your FFLogs API client in Settings → FFLogs."
+                : LookupTooltip("FFLogs", isResolving, fflogsBatchInProgress));
+        }
+    }
+
+    /// <summary>
+    /// One batch lookup button. It stays disabled until the integration is configured and every
+    /// player's name is resolved, and while its lookup is running. Returns true when clicked.
+    /// </summary>
+    private static bool LookupButton(string id, string name, bool configured, string unconfiguredLabel, bool isResolving, bool inProgress)
+    {
+        var (label, icon) = !configured ? (unconfiguredLabel, FontAwesomeIcon.Key)
+            : inProgress ? (name, FontAwesomeIcon.HourglassHalf)
+            : isResolving ? ($"{name} (resolving…)", FontAwesomeIcon.HourglassHalf)
+            : (name, FontAwesomeIcon.Search);
+
+        return M3Widgets.Button(id, label, M3ButtonStyle.Tonal, icon, enabled: configured && !isResolving && !inProgress);
+    }
+
+    private static string LookupTooltip(string name, bool isResolving, bool inProgress)
+    {
+        return isResolving ? "Waiting for player names to be resolved…"
+            : inProgress ? $"Looking up {name} data for all players…"
+            : $"Look up {name} data for all players";
+    }
+
     private void DrawMemberRow(PartyMemberInfo member, int index, Configuration cfg, bool hasTomestone, bool hasFFLogs)
     {
         ImGui.TableNextRow();
-        ImGui.PushID(index);
+        using var id = ImRaii.PushId(index);
 
         // ── Known-player / blacklist checks ──────────────────────────────────
         var isKnown = cfg.SpecialBorderColorForKnownPlayers &&
@@ -336,42 +303,10 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         // ── Column 0: Job icon + player name + badges ─────────────────────
         ImGui.TableSetColumnIndex(0);
 
-        // ── Job icon ──────────────────────────────────────────────────────
-        var jobIconId = 0u;
-        if (!string.IsNullOrWhiteSpace(member.JobAbbreviation))
+        if (cfg.ShowPartyJobIcons && !string.IsNullOrWhiteSpace(member.JobAbbreviation))
         {
-            var spec = FFLogsService.GetSpecForJob(member.JobAbbreviation);
-            var resolvedIconId = FFLogsService.GetJobIconIdForSpec(spec);
-            if (resolvedIconId.HasValue)
-            {
-                jobIconId = resolvedIconId.Value;
-            }
-        }
-
-        if (cfg.ShowPartyJobIcons && jobIconId > 0)
-        {
-            try
-            {
-                var iconLookup = new GameIconLookup(jobIconId);
-                var iconHandle = PassportCheckerReborn.TextureProvider.GetFromGameIcon(iconLookup);
-                var texture = iconHandle.GetWrapOrDefault();
-
-                if (texture is not null)
-                {
-                    ImGui.Image(texture.Handle, new Vector2(20, 20));
-                    ImGui.SameLine();
-                }
-                else
-                {
-                    ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), $"[{member.JobAbbreviation,-3}]");
-                    ImGui.SameLine();
-                }
-            }
-            catch
-            {
-                ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), $"[{member.JobAbbreviation,-3}]");
-                ImGui.SameLine();
-            }
+            OverlayWidgets.JobIcon(member.JobAbbreviation);
+            ImGui.SameLine();
         }
 
         // Player label
@@ -396,40 +331,31 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
             displayName = $"Player {index + 1}";
         }
 
+        ImGui.AlignTextToFramePadding();
         if (member.IsPrivate)
         {
-            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), displayName);
+            ImGui.TextColored(OverlayWidgets.Muted, displayName);
         }
-        else if (isKnown)
+        else if (isResolved)
         {
-            ClickableText(displayName, $"https://tomestone.gg/character-name/{member.World}/{member.Name}", cfg.KnownPlayerBorderColor);
+            OverlayWidgets.LinkText(displayName, $"https://tomestone.gg/character-name/{member.World}/{member.Name}",
+                isKnown ? cfg.KnownPlayerBorderColor : null, "Open on Tomestone.gg");
         }
         else
         {
-            if (!isResolved)
-                ImGui.TextUnformatted(displayName);
-            else
-                ClickableText(displayName, $"https://tomestone.gg/character-name/{member.World}/{member.Name}");
+            ImGui.TextUnformatted(displayName);
         }
 
         if (member.IsPrivate)
         {
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "[Private]");
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Adventure plate is hidden or unavailable");
-            }
+            M3Badge.Draw("Private", M3.Scheme.OnSurfaceVariant, "Adventure plate is hidden or unavailable");
         }
 
         if (isBlacklisted)
         {
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.9f, 0.2f, 0.2f, 1.0f), "[BL]");
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("On your blacklist");
-            }
+            M3Badge.Draw("BL", M3.Scheme.Error, "On your blacklist");
         }
 
         // ── Column 1: Tomestone data ──────────────────────────────────────
@@ -440,62 +366,11 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
             {
                 if (tomestoneInfoCache.TryGetValue(index, out var cachedTs))
                 {
-                    if (cachedTs != null)
-                    {
-                        if (cachedTs.NoLogs)
-                        {
-                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No Logs");
-                        }
-                        else
-                        {
-                            var hasClears = cachedTs.TotalClears.HasValue && cachedTs.TotalClears.Value > 0;
-                            var hasProgPoint = !string.IsNullOrWhiteSpace(cachedTs.ProgPoint);
-                            var hasBestParse = cachedTs.BestPercent.HasValue;
-
-                            if (hasClears)
-                            {
-                                var clearsText = "Cleared";
-                                if (!string.IsNullOrWhiteSpace(cachedTs.CompletionWeek))
-                                {
-                                    clearsText += $" ({cachedTs.CompletionWeek})";
-                                }
-
-                                if (hasBestParse)
-                                {
-                                    clearsText += $" | Best: {cachedTs.BestPercent:F0}%";
-                                }
-
-                                ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f), clearsText);
-                            }
-                            else if (hasProgPoint)
-                            {
-                                var progText = cachedTs.ProgPoint!;
-                                if (!string.IsNullOrWhiteSpace(cachedTs.DisplayPercent))
-                                {
-                                    progText += $" ({cachedTs.DisplayPercent})";
-                                }
-
-                                ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), progText);
-                            }
-                            else if (hasBestParse)
-                            {
-                                ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f),
-                                    $"Best: {cachedTs.BestPercent:F0}%");
-                            }
-                            else
-                            {
-                                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Hidden Profile");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Hidden Profile");
-                    }
+                    OverlayWidgets.TomestoneCell(cachedTs);
                 }
                 else if (tomestoneBatchInProgress)
                 {
-                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "\u2026");
+                    OverlayWidgets.Pending();
                 }
             }
         }
@@ -508,126 +383,14 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
             {
                 if (fflogsEncounterCache.TryGetValue(index, out var cachedFf))
                 {
-                    if (cachedFf is null || !cachedFf.HasData)
-                    {
-                        DrawNoLogsWithAverage(cachedFf?.AverageParsePercent);
-                    }
-                    else if (cachedFf.IsEncounterSpecific)
-                    {
-                        var hasMultiPhaseData = cachedFf.Phase1TotalKills.HasValue ||
-                                                cachedFf.Phase2TotalKills.HasValue ||
-                                                cachedFf.Phase1BestParse.HasValue ||
-                                                cachedFf.Phase2BestParse.HasValue ||
-                                                cachedFf.Phase2LowestBossHpPct.HasValue;
-
-                        if (hasMultiPhaseData)
-                        {
-                            var p1Parse = cachedFf.Phase1BestParse;
-                            var p2Parse = cachedFf.Phase2BestParse;
-
-                            if (cachedFf.TotalKills > 0 && p1Parse.HasValue && p2Parse.HasValue)
-                            {
-                                if (cachedFf.CurrentJobBestParse.HasValue)
-                                {
-                                    ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
-                                        $"Cleared {cachedFf.TotalKills}x");
-                                    ImGui.SameLine();
-                                    ImGui.TextUnformatted("P1");
-                                    ImGui.SameLine();
-                                    ImGui.TextColored(GetParseColor(p1Parse.Value), $"{p1Parse.Value:F0}%");
-                                    ImGui.SameLine();
-                                    ImGui.TextUnformatted("P2");
-                                    ImGui.SameLine();
-                                    ImGui.TextColored(GetParseColor(p2Parse.Value), $"{p2Parse.Value:F0}%");
-                                }
-                                else
-                                {
-                                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-                                        $"Cleared {cachedFf.TotalKills}x P1 {p1Parse.Value:F0}% P2 {p2Parse.Value:F0}%");
-                                }
-
-                                DrawBestParseOnDifferentJob(cachedFf, member);
-                            }
-                            else
-                            {
-                                if (p1Parse.HasValue)
-                                {
-                                    ImGui.TextColored(GetParseColor(p1Parse.Value), $"P1 {p1Parse.Value:F0}%");
-                                }
-                                else
-                                {
-                                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "P1 No logs");
-                                }
-
-                                ImGui.SameLine();
-
-                                if (cachedFf.Phase2LowestBossHpPct.HasValue)
-                                {
-                                    ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f),
-                                        $"P2 {cachedFf.Phase2LowestBossHpPct.Value:F0}%");
-                                }
-                                else if (p2Parse.HasValue)
-                                {
-                                    ImGui.TextColored(GetParseColor(p2Parse.Value), $"P2 {p2Parse.Value:F0}%");
-                                }
-                                else
-                                {
-                                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "P2 No logs");
-                                }
-
-                                DrawBestParseOnDifferentJob(cachedFf, member);
-                            }
-                        }
-                        else if (cachedFf.TotalKills > 0)
-                        {
-                            if (cachedFf.CurrentJobBestParse.HasValue)
-                            {
-                                ImGui.TextColored(GetParseColor(cachedFf.CurrentJobBestParse.Value),
-                                    $"Cleared {cachedFf.TotalKills}x {cachedFf.CurrentJobBestParse.Value:F0}%");
-                            }
-                            else
-                            {
-                                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-                                    $"Cleared {cachedFf.TotalKills}x No Current Job Logs");
-                            }
-
-                            DrawBestParseOnDifferentJob(cachedFf, member);
-                        }
-                        else if (cachedFf.LowestBossHpPct.HasValue)
-                        {
-                            ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f),
-                                $"{cachedFf.LowestBossHpPct.Value:F0}%");
-                        }
-                        else if (cachedFf.AverageParsePercent.HasValue)
-                        {
-                            DrawNoLogsWithAverage(cachedFf.AverageParsePercent);
-                        }
-                        else
-                        {
-                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No logs");
-                        }
-                    }
-                    else
-                    {
-                        if (cachedFf.BestParse.HasValue)
-                        {
-                            ImGui.TextColored(GetParseColor(cachedFf.BestParse.Value),
-                                $"Average overall parse {cachedFf.BestParse.Value:F1}%");
-                        }
-                        else
-                        {
-                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "N/A");
-                        }
-                    }
+                    OverlayWidgets.FFLogsCell(cachedFf, member);
                 }
                 else if (fflogsBatchInProgress)
                 {
-                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "\u2026");
+                    OverlayWidgets.Pending();
                 }
             }
         }
-
-        ImGui.PopID();
     }
 
     /// <summary>
@@ -858,116 +621,6 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
                 TomestoneService.OpenTomestonePage(member.Name, member.World);
             }
         }
-    }
-
-    /// <summary>
-    /// Returns an FFLogs-style color for the given parse percentile.
-    /// </summary>
-    internal static Vector4 GetParseColor(double percentile) => percentile switch
-    {
-        >= 99 => new Vector4(0.898f, 0.800f, 0.502f, 1.0f),  // Gold (99+)
-        >= 95 => new Vector4(0.894f, 0.510f, 0.200f, 1.0f),  // Orange (95-98)
-        >= 75 => new Vector4(0.635f, 0.282f, 0.808f, 1.0f),  // Purple (75-94)
-        >= 50 => new Vector4(0.118f, 0.392f, 1.000f, 1.0f),  // Blue (50-74)
-        >= 25 => new Vector4(0.118f, 0.784f, 0.118f, 1.0f),  // Green (25-49)
-        _ => new Vector4(0.600f, 0.600f, 0.600f, 1.0f),  // Grey (<25)
-    };
-
-    /// <summary>
-    /// Draws "No logs - Average percentage parse X%" with color, or plain "No logs" if no average.
-    /// </summary>
-    internal static void DrawNoLogsWithAverage(double? averageParsePercent)
-    {
-        if (averageParsePercent.HasValue)
-        {
-            var avgColor = GetParseColor(averageParsePercent.Value);
-            ImGui.TextColored(avgColor,
-                $"No logs - Average percentage parse {averageParsePercent.Value:F0}%");
-        }
-        else
-        {
-            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "No logs");
-        }
-    }
-
-    /// <summary>
-    /// If the overall best parse is on a different job from the member's current job,
-    /// draws it on a new line with the job icon. Does nothing when the current job
-    /// IS the best job (no redundant display).
-    /// </summary>
-    internal static void DrawBestParseOnDifferentJob(EncounterParseResult cachedFf, PartyMemberInfo member)
-    {
-        if (!cachedFf.BestParse.HasValue || cachedFf.BestParseJobAbbreviation == null)
-        {
-            return;
-        }
-
-        // If current job is the best job, only current job parse is shown – skip
-        if (string.Equals(cachedFf.BestParseJobAbbreviation, member.JobAbbreviation,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        // If the current job parse already matches or exceeds the best, skip
-        if (cachedFf.CurrentJobBestParse.HasValue &&
-            cachedFf.BestParse.Value <= cachedFf.CurrentJobBestParse.Value)
-        {
-            return;
-        }
-
-        DrawJobSpecBestParse(cachedFf.BestParse.Value, cachedFf.BestParseJobAbbreviation,
-            cachedFf.BestParseJobIconId);
-    }
-
-    /// <summary>
-    /// Draws a "Best on [icon] JOB: X%" line showing a parse for a specific job.
-    /// </summary>
-    internal static void DrawJobSpecBestParse(double parse, string jobAbbreviation, uint? jobIconId)
-    {
-        ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Best:");
-
-        // Draw job icon
-        ImGui.SameLine();
-        if (jobIconId.HasValue)
-        {
-            try
-            {
-                var iconLookup = new GameIconLookup(jobIconId.Value);
-                var iconHandle = PassportCheckerReborn.TextureProvider.GetFromGameIcon(iconLookup);
-                var texture = iconHandle.GetWrapOrDefault();
-                if (texture is not null)
-                {
-                    ImGui.Image(texture.Handle, new Vector2(16, 16));
-                    ImGui.SameLine();
-                }
-                else
-                {
-                    ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), $"[{jobAbbreviation}]");
-                    ImGui.SameLine();
-                }
-            }
-            catch
-            {
-                ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), $"[{jobAbbreviation}]");
-                ImGui.SameLine();
-            }
-        }
-        else
-        {
-            ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), $"[{jobAbbreviation}]");
-            ImGui.SameLine();
-        }
-
-        ImGui.TextColored(GetParseColor(parse), $"{parse:F0}%");
-    }
-
-    internal static void ClickableText(string content, string url, Vector4? col = null)
-    {
-        using var _ = ImRaii.PushColor(ImGuiCol.Text, col);
-        if (ImGui.Selectable(content)) Dalamud.Utility.Util.OpenLink(url);
-        if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
     }
 }
 

@@ -57,6 +57,10 @@ public class Configuration : IPluginConfiguration
     public string FFLogsClientId { get; set; } = string.Empty;
     public string FFLogsClientSecret { get; set; } = string.Empty;
 
+    // ── Appearance ───────────────────────────────────────────────────────────
+    /// <summary>Seed colour the Material theme generates every window's palette from.</summary>
+    public Vector4 UiAccentColor { get; set; } = UI.M3.DefaultSeed;
+
     public void Save()
     {
         PassportCheckerReborn.PluginInterface.SavePluginConfig(this);
