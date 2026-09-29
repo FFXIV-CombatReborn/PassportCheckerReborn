@@ -241,8 +241,7 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         ImGui.Dummy(new Vector2(0f, M3.Space1));
 
         // Draw party members in a table for proper grid layout
-        DrawPartyMemberTable(cachedPartyMembers, cfg);
-        contentRight = MathF.Max(contentRight, ImGui.GetItemRectMax().X);
+        contentRight = MathF.Max(contentRight, DrawPartyMemberTable(cachedPartyMembers, cfg));
 
         if (fflogsBatchInProgress || tomestoneBatchInProgress)
         {
@@ -272,7 +271,9 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
             contentRight = MathF.Max(contentRight, selectorRight);
         }
 
-        lastContentWidth = contentRight - contentStartX;
+        // Floored so fractional global scales (e.g. 117%) can never nudge the button past the content
+        // and grow the window by a sub-pixel each frame.
+        lastContentWidth = MathF.Floor(contentRight - contentStartX);
 
         // Cache the window size for Above positioning on the next frame.
         lastFrameSize = ImGui.GetWindowSize();
@@ -327,11 +328,17 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         return M3Widgets.Combo("##party_duty_select", ref selectedDutyIndex, dutyNames, width);
     }
 
-    private void DrawPartyMemberTable(List<PartyMemberInfo> members, Configuration cfg)
+    /// <summary>
+    /// Draws the member table and returns the right edge of its widest cell content. This is measured
+    /// from the cells rather than the table's item rect, because ImGui clips that rect to the window's
+    /// previous size, and feeding it back into the header layout made the auto-resizing window oscillate.
+    /// </summary>
+    private float DrawPartyMemberTable(List<PartyMemberInfo> members, Configuration cfg)
     {
+        var right = 0f;
         if (members.Count == 0)
         {
-            return;
+            return right;
         }
 
         var hasTomestone = cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey);
@@ -340,7 +347,7 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
 
         if (!ImGui.BeginTable("##PartyMemberTable", columnCount, OverlayWidgets.TableFlags))
         {
-            return;
+            return right;
         }
 
         // Setup columns
@@ -367,13 +374,17 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
             OverlayWidgets.HeaderCell("FFLogs");
         }
 
-        // Draw each party member row
+        right = ImGui.GetItemRectMax().X;
+
+        // Draw each party member row; the last item of a row sits in the rightmost column.
         for (var i = 0; i < members.Count; i++)
         {
             DrawPartyMemberRow(members[i], i, cfg, hasTomestone, hasFFLogs);
+            right = MathF.Max(right, ImGui.GetItemRectMax().X);
         }
 
         ImGui.EndTable();
+        return right;
     }
 
     private void DrawPartyMemberRow(PartyMemberInfo member, int index, Configuration cfg, bool hasTomestone, bool hasFFLogs)
