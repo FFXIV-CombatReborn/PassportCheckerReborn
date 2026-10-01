@@ -28,12 +28,18 @@ An open-source Party Finder enhancement plugin for Final Fantasy XIV, built on t
 
 ### Party Finder List Enhancements
 - **Auto-Refresh** — periodically refreshes the PF listing at a configurable interval (10–120 seconds), pausing while the detail pane is open.
+- **True Time-Based Sorting** — orders each page by the time listings have left (newest or oldest first) instead of grouping them by duty. The Party Finder's own sort button flips the order.
+- **100 Listings Per Page** — asks the server for 100 listings at a time instead of 50.
+- **One-Click Job Filter** — a button above the PF list that hides high-end duty listings with no open slot for your current job.
+- **View Recruitment** — adds a context-menu entry on players that opens their Party Finder listing.
+- **Keep Open on Party Changes** — stops the Party Finder closing itself when a member joins or leaves your party, and reloads the listing you were viewing.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `/pfchecker` | Toggle the main plugin window |
+| `/pcr` or `/pfchecker` | Toggle the settings window |
+| `/pcrparty` | Show or hide the party list overlay |
 
 ## Installation
 
@@ -48,16 +54,16 @@ https://raw.githubusercontent.com/FFXIV-CombatReborn/CombatRebornRepo/main/plugi
 
 ## Configuration
 
-Open settings with `/pfcheckersettings` or via the Dalamud plugin installer.
+Open settings with `/pcr` or via the Dalamud plugin installer.
 
 ### General Tab
-Configure Party Finder detail and list enhancements. Some settings are placeholders for future features and are shown as disabled in the UI.
+Configure Party Finder detail and list enhancements. A setting that hooks the game is shown as disabled if a game update has broken it and the plugin needs updating.
 
 ### Overlay Tab
 Toggle the member info overlay, high-end duty filter, overlay side, and FFLogs/Tomestone integrations. Configure the party list overlay position and auto-hide behaviour.
 
 ### FFLogs Integration Tab
-Enter your FFLogs API Client ID and Client Secret, then click **Save & Test Credentials** to verify.
+Enter your FFLogs API Client ID and Client Secret, then click **Save & test** to verify.
 
 <details>
 <summary>How to obtain FFLogs API credentials</summary>

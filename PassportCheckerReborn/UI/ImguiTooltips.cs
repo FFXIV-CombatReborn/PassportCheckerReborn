@@ -2,10 +2,9 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>Tooltips that wrap long text instead of stretching across the screen.</summary>
 internal static class ImguiTooltips
 {
-    /// <summary>Wrap width, in multiples of the current font size.</summary>
+    // In multiples of the font size.
     private const float WrapEms = 28f;
 
     public static void HoveredTooltip(string? text)

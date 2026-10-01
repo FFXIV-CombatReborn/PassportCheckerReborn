@@ -38,7 +38,6 @@ internal static class M3TextField
             changed = ImGui.InputTextWithHint("##field", hint, ref text, maxLength, flags);
         }
 
-        // The active indicator along the bottom edge thickens and takes the primary colour on focus.
         var focused = ImGui.IsItemActive();
         var thickness = (focused ? 2f : 1f) * scale;
         var indicator = focused ? s.Primary : M3.Alpha(s.OnSurfaceVariant, hovered ? 1f : 0.7f);

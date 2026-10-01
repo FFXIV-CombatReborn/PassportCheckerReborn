@@ -5,16 +5,9 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>
-/// Remembers how tall each card was last frame.
-/// <para>
-/// A card's height is only known after its content is drawn. Splitting the draw list so the
-/// container could be painted into an earlier channel is not safe here: ImGui tables run their own
-/// splitter over the same draw list, and two active splitters corrupt it. So each card paints its
-/// container up front from last frame's measurement — a card that changes height is one frame
-/// behind for a single frame, and correct from then on.
-/// </para>
-/// </summary>
+// Remembers how tall each card was last frame, which is what its container is painted from. Painting
+// it afterwards into an earlier draw-list channel is not safe: ImGui tables run their own splitter
+// over the same draw list, and two active splitters corrupt it.
 internal static class M3CardHost
 {
     private const int MaxTrackedCards = 512;
@@ -45,17 +38,11 @@ internal static class M3CardHost
 
 internal enum M3CardStyle
 {
-    /// <summary>Lowest emphasis: no fill, just an outline.</summary>
     Outlined,
-
-    /// <summary>Default: a raised surface container.</summary>
     Filled,
-
-    /// <summary>Highest emphasis: a raised surface with a drop shadow.</summary>
     Elevated,
 }
 
-/// <summary>A Material card: related settings under a title, with an accent rail on the leading edge.</summary>
 internal static class M3Card
 {
     public static float ContentInset => 16f * M3.Scale;
@@ -64,10 +51,6 @@ internal static class M3Card
     public static float BottomPadding => 14f * M3.Scale;
     public static float Gap => 10f * M3.Scale;
 
-    /// <summary>
-    /// Opens a card. Content drawn until disposal is laid out inside the card's padding; the
-    /// container is painted from the height the card occupied last frame.
-    /// </summary>
     public static Scope Begin(string id, string? title = null, FontAwesomeIcon icon = FontAwesomeIcon.None, Vector4? accent = null, M3CardStyle style = M3CardStyle.Filled, string? subtitle = null)
     {
         var scale = M3.Scale;
@@ -116,19 +99,14 @@ internal static class M3Card
             cursorY += Gap - (4f * scale);
         }
 
-        // The inset has to go through Indent, not just the cursor: ImGui recomputes the start of
-        // every new line from the indent, so positioning the cursor alone would leave the first row
-        // inset and drop everything that wraps after it back against the card's left edge.
+        // Inset with Indent, not just the cursor: ImGui starts every new line from the indent.
         ImGui.Indent(ContentInset);
         PushContentWrap(min.X + width);
         ImGui.SetCursorScreenPos(new Vector2(min.X + ContentInset, cursorY));
         return new Scope(id, min, width, ContentInset);
     }
 
-    /// <summary>
-    /// Bounds ImGui.TextWrapped to the card's right padding. Without this, wrapped text inside a
-    /// card runs to the window edge, because the card is not a real child window.
-    /// </summary>
+    // Without this, wrapped text runs to the window edge, because the card is not a real child window.
     internal static void PushContentWrap(float cardRightScreenX)
     {
         var localX = cardRightScreenX - RightInset - ImGui.GetWindowPos().X + ImGui.GetScrollX();
@@ -187,11 +165,6 @@ internal static class M3Card
     }
 }
 
-/// <summary>
-/// A card whose body can be collapsed: the header is a full-width pressable row with a rotating
-/// chevron. <c>trailing</c> is supporting text set just inside the chevron, such as a date; it is
-/// dropped when the title needs the room, and a title that still does not fit is truncated.
-/// </summary>
 internal static class M3ExpandableCard
 {
     public static Scope Begin(string id, string title, ref bool expanded, FontAwesomeIcon icon = FontAwesomeIcon.None, Vector4? accent = null, string? badge = null, Vector4? badgeAccent = null, string? trailing = null)
@@ -285,13 +258,11 @@ internal static class M3ExpandableCard
 
         DrawChevron(drawList, chevronCenter, progress, M3.Alpha(s.OnSurfaceVariant, hovered ? 1f : 0.8f));
 
-        // Gated on the open state, not the chevron's easing: the body is drawn only while expanded,
-        // so keeping the divider alive for the tail of the animation strands it under a closed section.
+        // Gated on the open state, not the chevron's easing, or the divider would outlive the body
+        // for the tail of the animation.
         var indent = 0f;
         if (expanded)
         {
-            // Indent rather than just moving the cursor, so wrapped rows keep the inset instead of
-            // snapping back to the card's left edge on every new line.
             indent = M3Card.ContentInset;
             ImGui.Indent(indent);
             M3Card.PushContentWrap(min.X + width);

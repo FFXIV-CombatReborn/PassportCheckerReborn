@@ -5,7 +5,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>One entry in the navigation rail or drawer.</summary>
 internal readonly record struct M3NavItem(
     string Id,
     string Label,
@@ -16,25 +15,19 @@ internal readonly record struct M3NavItem(
     string? Badge = null,
     bool SeparatorAfter = false);
 
-/// <summary>One tab in a <see cref="M3Navigation.Tabs"/> row.</summary>
 internal readonly record struct M3Tab(
     string Label,
     FontAwesomeIcon Icon = FontAwesomeIcon.None,
     string? Badge = null,
     string? Tooltip = null);
 
-/// <summary>
-/// Material navigation: a full-width drawer when there is room for labels, collapsing to an icon
-/// rail when the side column is narrower than <see cref="DrawerBreakpoint"/>.
-/// </summary>
 internal static class M3Navigation
 {
-    /// <summary>Minimum column width at which labels are shown.</summary>
+    // Minimum column width at which labels are shown.
     public const float DrawerBreakpoint = 128f;
 
     private static float DrawerRowHeight => M3.FitText(48f, 12f);
 
-    /// <summary>The indicator pill and the gaps around it, plus the caption beneath: 58dp at the default text size.</summary>
     private static float RailItemHeight
     {
         get
@@ -44,7 +37,6 @@ internal static class M3Navigation
         }
     }
 
-    /// <summary>Draws the navigation list. Returns the id of the item clicked this frame, if any.</summary>
     public static string? Draw(string id, IReadOnlyList<M3NavItem> items, bool expanded)
     {
         string? clicked = null;
@@ -143,7 +135,6 @@ internal static class M3Navigation
         var drawList = ImGui.GetWindowDrawList();
         var selection = M3Motion.Approach($"nav_sel_{item.Id}", item.Selected ? 1f : 0f, M3Motion.EmphasisedDuration);
 
-        // The rail indicator is a 56x32 pill sitting behind the icon.
         var indicatorSize = new Vector2(MathF.Min(56f * scale, width - (4f * scale)), 32f * scale);
         var indicatorMin = new Vector2(min.X + ((width - indicatorSize.X) * 0.5f), min.Y + (4f * scale));
         var indicatorMax = indicatorMin + indicatorSize;
@@ -320,7 +311,6 @@ internal static class M3Navigation
         return result;
     }
 
-    /// <summary>Clips a label to the available width, appending an ellipsis when it does not fit.</summary>
     public static string Truncate(string text, float maxWidth)
     {
         if (string.IsNullOrEmpty(text) || ImGui.CalcTextSize(text).X <= maxWidth)

@@ -1,8 +1,6 @@
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
-using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using Lumina.Excel.Sheets;
 using PassportCheckerReborn.Services;
 using PassportCheckerReborn.UI;
 using System;
@@ -12,50 +10,64 @@ using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Windows;
 
-/// <summary>
-/// An overlay window that shows FFLogs parse data for current party members,
-/// attached to the in-game Party Members UI element (_PartyList) or as a free-floating window.
-/// </summary>
-public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Member Info##PFCheckerPartyList",
-           ImGuiWindowFlags.NoTitleBar |
-               ImGuiWindowFlags.NoResize |
-               ImGuiWindowFlags.NoMove |
-               ImGuiWindowFlags.NoScrollbar |
-               ImGuiWindowFlags.AlwaysAutoResize), IDisposable
+// FFLogs and Tomestone data for the current party, attached to the game's party list or free-floating.
+public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Member Info##PFCheckerPartyList", LockedFlags)
 {
+    private const ImGuiWindowFlags FreeFlags = ImGuiWindowFlags.NoTitleBar
+        | ImGuiWindowFlags.NoScrollbar
+        | ImGuiWindowFlags.AlwaysAutoResize;
+
+    private const ImGuiWindowFlags LockedFlags = FreeFlags | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+
+    private const string NoDuty = "(None)";
+
+    private static readonly string[] PartyListAddons = ["_PartyList", "_CrossWorldPartyList"];
+    private static readonly string[] DutyNames = BuildDutyNames();
+
     private readonly PassportCheckerReborn plugin = plugin;
 
-    /// <summary>Cached overlay size from the previous frame, used for Above positioning.</summary>
-    private Vector2 lastFrameSize = new(310, 200);
+    private IReadOnlyList<PartyMemberInfo> members = [];
+    private int membersVersion = -1;
 
-    // Cached party member list
-    private List<PartyMemberInfo> cachedPartyMembers = [];
+    // Results by member index. Each lookup replaces the whole dictionary when it finishes.
+    private Dictionary<int, EncounterParseResult?> fflogsResults = [];
+    private Dictionary<int, TomestoneCharacterInfo?> tomestoneResults = [];
+    private bool fflogsLoading;
+    private bool tomestoneLoading;
 
-    // Per-member FFLogs encounter cache (index → result)
-    private Dictionary<int, EncounterParseResult?> fflogsCache = [];
-    private bool fflogsBatchInProgress;
+    // Goes up with every lookup started, so one that a newer lookup has overtaken drops its results.
+    private int lookupSerial;
 
-    // Per-member Tomestone info cache (index → character info)
-    private Dictionary<int, TomestoneCharacterInfo?> tomestoneCache = [];
-    private bool tomestoneBatchInProgress;
-
-    // Duty selection for encounter-specific lookups
-    private string[] dutyNames = [];
     private int selectedDutyIndex;
-    private string? selectedDutyName;
-    private bool dutyListInitialized;
 
-    // Tracks when party composition changes to re-fetch data
-    private string lastPartyCompositionKey = string.Empty;
-
-    // Width of the widest content last frame, which the header's hide button aligns to.
+    // From the previous frame: the window's size, for placing it above the party list, and the width
+    // of its widest content, which the header's hide button aligns to.
+    private Vector2 lastWindowSize = new(310, 200);
     private float lastContentWidth;
 
     private M3Style.Scope? theme;
 
-    public void Dispose()
+    private string? SelectedDutyName => selectedDutyIndex > 0 ? DutyNames[selectedDutyIndex] : null;
+
+    public override unsafe bool DrawConditions()
     {
-        GC.SuppressFinalize(this);
+        return plugin.PartyListMonitorService.Members.Count > 0 || FindPartyListAddon() != null;
+    }
+
+    public override void PreDraw()
+    {
+        theme = M3Style.Push(compact: true);
+
+        var position = plugin.Configuration.PartyListOverlayPosition;
+        if (position == PartyListOverlayPosition.Unbound)
+        {
+            Flags = FreeFlags;
+            Position = null;
+            return;
+        }
+
+        Flags = LockedFlags;
+        PositionBeside(position);
     }
 
     public override void PostDraw()
@@ -64,172 +76,71 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         theme = null;
     }
 
-    public override unsafe void PreDraw()
+    private static unsafe AtkUnitBase* FindPartyListAddon()
     {
-        theme = M3Style.Push(compact: true);
-
-        var position = plugin.Configuration.PartyListOverlayPosition;
-
-        // For Unbound mode, make the window freely movable.
-        if (position == PartyListOverlayPosition.Unbound)
+        foreach (var name in PartyListAddons)
         {
-            Flags = ImGuiWindowFlags.NoTitleBar |
-                    ImGuiWindowFlags.NoScrollbar |
-                    ImGuiWindowFlags.AlwaysAutoResize;
-            // Clear any previously set position so ImGui allows free movement.
-            Position = null;
-            return;
+            var addonPtr = PassportCheckerReborn.GameGui.GetAddonByName(name, 1);
+            if (!addonPtr.IsNull && ((AtkUnitBase*)addonPtr.Address)->IsVisible)
+            {
+                return (AtkUnitBase*)addonPtr.Address;
+            }
         }
 
-        // All other modes: lock position/movement and snap to the party list addon.
-        Flags = ImGuiWindowFlags.NoTitleBar |
-                ImGuiWindowFlags.NoResize |
-                ImGuiWindowFlags.NoMove |
-                ImGuiWindowFlags.NoScrollbar |
-                ImGuiWindowFlags.AlwaysAutoResize;
-
-        // Position this window relative to the party list addon.
-        // Try _PartyList first, then fall back to _CrossWorldPartyList for crossworld parties.
-        if (TryPositionRelativeToAddon("_PartyList", position))
-        {
-            return;
-        }
-
-        if (TryPositionRelativeToAddon("_CrossWorldPartyList", position))
-        {
-            return;
-        }
+        return null;
     }
 
-    /// <summary>
-    /// Attempts to position this window relative to the named addon.
-    /// Returns <c>true</c> if the addon was found, visible, and the position was set.
-    /// </summary>
-    private unsafe bool TryPositionRelativeToAddon(string addonName, PartyListOverlayPosition position)
+    private unsafe void PositionBeside(PartyListOverlayPosition position)
     {
-        try
+        var addon = FindPartyListAddon();
+        if (addon == null)
         {
-            var addonPtr = PassportCheckerReborn.GameGui.GetAddonByName(addonName, 1);
-            if (addonPtr.IsNull)
-            {
-                return false;
-            }
-
-            var addon = (AtkUnitBase*)addonPtr.Address;
-            if (!addon->IsVisible)
-            {
-                return false;
-            }
-
-            var addonX = addon->X;
-            var addonY = addon->Y;
-            var addonWidth = addon->GetScaledWidth(true);
-            var addonHeight = addon->GetScaledHeight(true);
-
-            var vpPos = ImGui.GetMainViewport().Pos;
-
-            float overlayX;
-            float overlayY;
-
-            switch (position)
-            {
-                case PartyListOverlayPosition.Left:
-                    // Anchor the top-right corner of the overlay to the left edge of the addon
-                    // so the window grows leftward and does not cover the party list.
-                    var anchorX = vpPos.X + addonX - 10;
-                    overlayY = vpPos.Y + addonY;
-
-                    // Clamp so the left edge of the window (anchorX - windowWidth) stays on screen.
-                    // Use the previous frame's size for estimation; falls back to a safe default on first frame.
-                    var windowWidth = lastFrameSize.X;
-                    var vpSize = ImGui.GetMainViewport().Size;
-                    var minAnchorX = vpPos.X + windowWidth;
-                    var maxAnchorX = vpPos.X + vpSize.X;
-                    anchorX = Math.Clamp(anchorX, minAnchorX, maxAnchorX);
-
-                    ImGui.SetNextWindowPos(new Vector2(anchorX, overlayY), ImGuiCond.Always, new Vector2(1f, 0f));
-                    Position = null;
-                    break;
-
-                case PartyListOverlayPosition.Right:
-                    overlayX = vpPos.X + addonX + addonWidth + 5;
-                    overlayY = vpPos.Y + addonY;
-                    Position = new Vector2(overlayX, overlayY);
-                    break;
-
-                case PartyListOverlayPosition.Above:
-                    overlayX = vpPos.X + addonX;
-                    overlayY = vpPos.Y + addonY - lastFrameSize.Y - 5;
-                    if (overlayY < vpPos.Y)
-                    {
-                        overlayY = vpPos.Y; // Clamp to screen edge
-                    }
-
-                    Position = new Vector2(overlayX, overlayY);
-                    break;
-
-                case PartyListOverlayPosition.Below:
-                    overlayX = vpPos.X + addonX;
-                    overlayY = vpPos.Y + addonY + addonHeight + 5;
-                    Position = new Vector2(overlayX, overlayY);
-                    break;
-
-                default:
-                    return false;
-            }
-
-            return true;
+            return;
         }
-        catch (Exception)
+
+        var viewport = ImGui.GetMainViewport();
+        var left = viewport.Pos.X + addon->X;
+        var top = viewport.Pos.Y + addon->Y;
+
+        switch (position)
         {
-            return false;
+            case PartyListOverlayPosition.Left:
+                // Anchored by its top-right corner, so it grows leftwards and never covers the party list.
+                var right = MathF.Min(MathF.Max(left - 10f, viewport.Pos.X + lastWindowSize.X), viewport.Pos.X + viewport.Size.X);
+                ImGui.SetNextWindowPos(new Vector2(right, top), ImGuiCond.Always, new Vector2(1f, 0f));
+                Position = null;
+                break;
+
+            case PartyListOverlayPosition.Right:
+                Position = new Vector2(left + addon->GetScaledWidth(true) + 5f, top);
+                break;
+
+            case PartyListOverlayPosition.Above:
+                Position = new Vector2(left, MathF.Max(top - lastWindowSize.Y - 5f, viewport.Pos.Y));
+                break;
+
+            case PartyListOverlayPosition.Below:
+                Position = new Vector2(left, top + addon->GetScaledHeight(true) + 5f);
+                break;
         }
     }
 
     public override void Draw()
     {
         var cfg = plugin.Configuration;
+        var monitor = plugin.PartyListMonitorService;
 
-        if (!cfg.ShowPartyListOverlay ||
-            (!cfg.EnableFFLogsIntegrationOverlay && !cfg.EnableTomestoneIntegration))
+        if (monitor.Members.Count == 0)
         {
-            IsOpen = false;
-            return;
-        }
-
-        // Read current party members
-        var partyMembers = ReadPartyMembers();
-        if (partyMembers.Count == 0)
-        {
-            var partyListVisible = IsPartyListVisible();
-            if (!partyListVisible)
-            {
-                IsOpen = false;
-                return;
-            }
-
             OverlayWidgets.EmptyState(FontAwesomeIcon.HourglassHalf, "Waiting for party data…");
             return;
         }
 
-        // Build the duty name list once
-        if (!dutyListInitialized)
+        if (monitor.Version != membersVersion)
         {
-            InitializeDutyList();
-            dutyListInitialized = true;
-        }
-
-        // Check if party composition changed
-        var compositionKey = BuildCompositionKey(partyMembers);
-        if (compositionKey != lastPartyCompositionKey)
-        {
-            lastPartyCompositionKey = compositionKey;
-            cachedPartyMembers = partyMembers;
-            fflogsCache = [];
-            tomestoneCache = [];
-
-            // Auto-fetch data for party members
-            AutoFetchData(partyMembers, cfg);
+            membersVersion = monitor.Version;
+            members = monitor.Members;
+            StartLookups(cfg);
         }
 
         var contentStartX = ImGui.GetCursorScreenPos().X;
@@ -239,60 +150,43 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         }
 
         ImGui.Dummy(new Vector2(0f, M3.Space1));
+        contentRight = MathF.Max(contentRight, DrawMemberTable(cfg));
 
-        // Draw party members in a table for proper grid layout
-        contentRight = MathF.Max(contentRight, DrawPartyMemberTable(cachedPartyMembers, cfg));
-
-        if (fflogsBatchInProgress || tomestoneBatchInProgress)
+        if (fflogsLoading || tomestoneLoading)
         {
             ImGui.Dummy(new Vector2(0f, M3.Space1));
-            var loadingText = fflogsBatchInProgress && tomestoneBatchInProgress
-                ? "Loading FFLogs & Tomestone data…"
-                : fflogsBatchInProgress
-                    ? "Loading FFLogs data…"
-                    : "Loading Tomestone data…";
-            OverlayWidgets.StatusLine(FontAwesomeIcon.HourglassHalf, loadingText);
+            OverlayWidgets.StatusLine(FontAwesomeIcon.HourglassHalf,
+                fflogsLoading && tomestoneLoading ? "Loading FFLogs & Tomestone data…"
+                : fflogsLoading ? "Loading FFLogs data…"
+                : "Loading Tomestone data…");
             contentRight = MathF.Max(contentRight, ImGui.GetItemRectMax().X);
         }
 
-        // ── Duty selection dropdown ─────────────────────────────────────────
-        if (dutyNames.Length > 0)
+        ImGui.Dummy(new Vector2(0f, M3.Space1));
+        if (DrawDutySelector(out var selectorRight))
         {
-            ImGui.Dummy(new Vector2(0f, M3.Space1));
-            if (DrawDutySelector(out var selectorRight))
-            {
-                selectedDutyName = selectedDutyIndex > 0 ? dutyNames[selectedDutyIndex] : null;
-                // Re-fetch data with new duty selection
-                fflogsCache = [];
-                tomestoneCache = [];
-                AutoFetchData(cachedPartyMembers, cfg);
-            }
-
-            contentRight = MathF.Max(contentRight, selectorRight);
+            StartLookups(cfg);
         }
 
-        // Floored so fractional global scales (e.g. 117%) can never nudge the button past the content
-        // and grow the window by a sub-pixel each frame.
-        lastContentWidth = MathF.Floor(contentRight - contentStartX);
+        contentRight = MathF.Max(contentRight, selectorRight);
 
-        // Cache the window size for Above positioning on the next frame.
-        lastFrameSize = ImGui.GetWindowSize();
+        // Floored so a fractional global scale can never nudge the hide button past the content and
+        // grow the window by a sub-pixel each frame.
+        lastContentWidth = MathF.Floor(contentRight - contentStartX);
+        lastWindowSize = ImGui.GetWindowSize();
     }
 
-    /// <summary>
-    /// The title row, with the hide button at its trailing edge. Returns false when the user hid the
-    /// overlay. <paramref name="contentRight"/> receives the title's right edge, not the button's.
-    /// </summary>
+    // False when the user hid the overlay. contentRight is the title's right edge, not the button's.
     private bool DrawHeader(Configuration cfg, float contentStartX, out float contentRight)
     {
-        var dutyName = GetEffectiveDutyName();
+        var dutyName = TomestoneDutyName;
         OverlayWidgets.Header(FontAwesomeIcon.UserFriends, "Party Members", string.IsNullOrWhiteSpace(dutyName) ? null : dutyName);
         var headerMin = ImGui.GetItemRectMin();
         var headerMax = ImGui.GetItemRectMax();
         contentRight = headerMax.X;
 
-        // Aligned to the widest content of the previous frame rather than the window edge: this window
-        // auto-resizes, so anchoring to its edge would stop it ever shrinking.
+        // Aligned to last frame's widest content rather than the window's edge: the window auto-resizes,
+        // so anchoring to its edge would stop it ever shrinking.
         var buttonSize = 26f * M3.Scale;
         ImGui.SameLine();
         var buttonX = MathF.Max(ImGui.GetCursorScreenPos().X, contentStartX + lastContentWidth - buttonSize);
@@ -303,14 +197,13 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         {
             cfg.ShowPartyListOverlay = false;
             cfg.Save();
-            IsOpen = false;
             return false;
         }
 
         return true;
     }
 
-    /// <summary>The duty picker for encounter-specific lookups. Returns true when the selection changed.</summary>
+    // True when the selection changed.
     private bool DrawDutySelector(out float right)
     {
         const string label = "Duty";
@@ -325,61 +218,24 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         var comboX = start.X + labelSize.X + M3.Space2;
         ImGui.SetCursorScreenPos(new Vector2(comboX, start.Y));
         right = comboX + width;
-        return M3Widgets.Combo("##party_duty_select", ref selectedDutyIndex, dutyNames, width);
+        return M3Widgets.Combo("##party_duty_select", ref selectedDutyIndex, DutyNames, width);
     }
 
-    /// <summary>
-    /// Draws the member table and returns the right edge of its widest cell content. This is measured
-    /// from the cells rather than the table's item rect, because ImGui clips that rect to the window's
-    /// previous size, and feeding it back into the header layout made the auto-resizing window oscillate.
-    /// </summary>
-    private float DrawPartyMemberTable(List<PartyMemberInfo> members, Configuration cfg)
+    // Returns the right edge of the widest cell. The table's own item rect will not do: ImGui clips it
+    // to the window's previous size, and feeding that back into the header made the window oscillate.
+    private float DrawMemberTable(Configuration cfg)
     {
-        var right = 0f;
-        if (members.Count == 0)
+        var hasTomestone = cfg.EnableTomestoneIntegration && cfg.HasTomestoneKey();
+        var hasFFLogs = cfg.EnableFFLogsIntegrationOverlay && cfg.HasFFLogsCredentials();
+        if (!OverlayWidgets.BeginMemberTable("##PartyMemberTable", hasTomestone, hasFFLogs))
         {
-            return right;
+            return 0f;
         }
 
-        var hasTomestone = cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey);
-        var hasFFLogs = cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret);
-        var columnCount = 1 + (hasTomestone ? 1 : 0) + (hasFFLogs ? 1 : 0);
-
-        if (!ImGui.BeginTable("##PartyMemberTable", columnCount, OverlayWidgets.TableFlags))
-        {
-            return right;
-        }
-
-        // Setup columns
-        ImGui.TableSetupColumn("Player", ImGuiTableColumnFlags.WidthFixed);
-        if (hasTomestone)
-        {
-            ImGui.TableSetupColumn("Tomestone", ImGuiTableColumnFlags.WidthFixed);
-        }
-
-        if (hasFFLogs)
-        {
-            ImGui.TableSetupColumn("FFLogs", ImGuiTableColumnFlags.WidthFixed);
-        }
-
-        OverlayWidgets.BeginHeaderRow();
-        OverlayWidgets.HeaderCell("Player");
-        if (hasTomestone)
-        {
-            OverlayWidgets.HeaderCell("Tomestone");
-        }
-
-        if (hasFFLogs)
-        {
-            OverlayWidgets.HeaderCell("FFLogs");
-        }
-
-        right = ImGui.GetItemRectMax().X;
-
-        // Draw each party member row; the last item of a row sits in the rightmost column.
+        var right = ImGui.GetItemRectMax().X;
         for (var i = 0; i < members.Count; i++)
         {
-            DrawPartyMemberRow(members[i], i, cfg, hasTomestone, hasFFLogs);
+            DrawMemberRow(members[i], i, cfg, hasTomestone, hasFFLogs);
             right = MathF.Max(right, ImGui.GetItemRectMax().X);
         }
 
@@ -387,12 +243,11 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         return right;
     }
 
-    private void DrawPartyMemberRow(PartyMemberInfo member, int index, Configuration cfg, bool hasTomestone, bool hasFFLogs)
+    private void DrawMemberRow(PartyMemberInfo member, int index, Configuration cfg, bool hasTomestone, bool hasFFLogs)
     {
-        using var id = ImRaii.PushId($"party_{index}");
+        using var id = ImRaii.PushId(index);
         ImGui.TableNextRow();
 
-        // ── Player column: job icon + name ───────────────────────────────────
         ImGui.TableNextColumn();
         if (cfg.ShowPartyJobIcons)
         {
@@ -407,17 +262,15 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         }
         else
         {
-            OverlayWidgets.LinkText($"{member.Name}@{member.World}",
-                $"https://tomestone.gg/character-name/{member.World}/{member.Name}", tooltip: "Open on Tomestone.gg");
+            OverlayWidgets.PlayerLink($"{member.Name}@{member.World}", member);
         }
 
-        // ── Tomestone data column ────────────────────────────────────────────
         if (hasTomestone)
         {
             ImGui.TableNextColumn();
-            if (tomestoneCache.TryGetValue(index, out var cachedTs))
+            if (tomestoneResults.TryGetValue(index, out var tomestone))
             {
-                OverlayWidgets.TomestoneCell(cachedTs);
+                OverlayWidgets.TomestoneCell(tomestone);
             }
             else
             {
@@ -425,13 +278,12 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
             }
         }
 
-        // ── FFLogs data column ───────────────────────────────────────────────
         if (hasFFLogs)
         {
             ImGui.TableNextColumn();
-            if (fflogsCache.TryGetValue(index, out var cachedFf))
+            if (fflogsResults.TryGetValue(index, out var fflogs))
             {
-                OverlayWidgets.FFLogsCell(cachedFf, member);
+                OverlayWidgets.FFLogsCell(fflogs, member);
             }
             else
             {
@@ -440,358 +292,103 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         }
     }
 
-    /// <summary>
-    /// Reads party members from the Dalamud IPartyList service, falling back to
-    /// <see cref="InfoProxyCrossRealm"/> for crossworld parties when IPartyList is empty.
-    /// </summary>
-    private List<PartyMemberInfo> ReadPartyMembers()
+    private static string[] BuildDutyNames()
     {
-        var result = new List<PartyMemberInfo>();
+        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(FFLogsService.SupportedDutyNames);
+        names.UnionWith(TomestoneService.SupportedDutyNames);
+        return [NoDuty, .. names];
+    }
 
+    // The duty picked in the overlay, or else the last one viewed in the Party Finder.
+    private string? TomestoneDutyName => SelectedDutyName ?? plugin.PartyFinderManager.LookupDutyName;
+
+    // As above, but only while that Party Finder listing is still open.
+    private string? FFLogsDutyName
+    {
+        get
+        {
+            var partyFinder = plugin.PartyFinderManager;
+            return SelectedDutyName ?? (partyFinder.CurrentDutyId > 0 ? partyFinder.LookupDutyName : partyFinder.CurrentDutyName);
+        }
+    }
+
+    private void StartLookups(Configuration cfg)
+    {
+        var serial = ++lookupSerial;
+        fflogsResults = [];
+        tomestoneResults = [];
+
+        fflogsLoading = cfg.EnableFFLogsIntegrationOverlay && cfg.HasFFLogsCredentials();
+        if (fflogsLoading)
+        {
+            _ = LookUpFFLogsAsync(members, FFLogsDutyName, serial);
+        }
+
+        tomestoneLoading = cfg.EnableTomestoneIntegration && cfg.HasTomestoneKey();
+        if (tomestoneLoading)
+        {
+            _ = LookUpTomestoneAsync(members, TomestoneDutyName, serial);
+        }
+    }
+
+    private async Task LookUpFFLogsAsync(IReadOnlyList<PartyMemberInfo> party, string? dutyName, int serial)
+    {
+        var results = new Dictionary<int, EncounterParseResult?>();
         try
         {
-            var partyList = PassportCheckerReborn.PartyList;
-            if (partyList != null && partyList.Length > 0)
+            if (FFLogsService.GetEncounterIdsForDuty(dutyName) is { } encounterIds)
             {
-                for (var i = 0; i < partyList.Length; i++)
+                foreach (var (index, result) in await plugin.FFLogsService.GetEncounterDataAsync(party, encounterIds))
                 {
-                    var member = partyList[i];
-                    if (member == null)
-                    {
-                        continue;
-                    }
-
-                    var name = member.Name.TextValue;
-                    if (string.IsNullOrWhiteSpace(name))
-                    {
-                        continue;
-                    }
-
-                    var world = member.World.ValueNullable?.Name.ToString() ?? string.Empty;
-                    var worldId = member.World.RowId;
-                    var classJob = member.ClassJob.ValueNullable;
-                    var jobAbbreviation = classJob?.Abbreviation.ToString() ?? "???";
-                    var contentId = member.ContentId;
-
-                    // Add to CidCache if we have a valid ContentId
-                    if (contentId != 0 && !string.IsNullOrEmpty(world))
-                    {
-                        plugin.CidCache.Set(contentId, name, (ushort)worldId, world);
-                    }
-
-                    result.Add(new PartyMemberInfo(name, world, jobAbbreviation, contentId, false, (ushort)worldId));
-                }
-
-                return result;
-            }
-
-            // Fallback: read from InfoProxyCrossRealm for crossworld parties
-            result = ReadCrossRealmPartyMembers();
-        }
-        catch (Exception)
-        {
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Reads party members from <see cref="InfoProxyCrossRealm"/> when in a crossworld party.
-    /// This provides member data (including ContentId) even when <see cref="Dalamud.Plugin.Services.IPartyList"/> hasn't populated.
-    /// </summary>
-    private unsafe List<PartyMemberInfo> ReadCrossRealmPartyMembers()
-    {
-        var result = new List<PartyMemberInfo>();
-        try
-        {
-            var cwProxy = InfoProxyCrossRealm.Instance();
-            if (cwProxy == null || !cwProxy->IsInCrossRealmParty)
-            {
-                return result;
-            }
-
-            var worldSheet = PassportCheckerReborn.DataManager.GetExcelSheet<World>();
-            var classJobSheet = PassportCheckerReborn.DataManager.GetExcelSheet<ClassJob>();
-
-            var localIndex = cwProxy->LocalPlayerGroupIndex;
-            var memberCount = InfoProxyCrossRealm.GetGroupMemberCount(localIndex);
-            for (var i = 0; i < memberCount; i++)
-            {
-                var memberPtr = InfoProxyCrossRealm.GetGroupMember((uint)i, localIndex);
-                if (memberPtr == null)
-                {
-                    continue;
-                }
-
-                var member = *memberPtr;
-                if (member.HomeWorld == -1 || string.IsNullOrEmpty(member.NameString))
-                {
-                    continue;
-                }
-
-                var worldName = worldSheet?.GetRowOrDefault((uint)member.HomeWorld)?.Name.ToString()
-                    ?? string.Empty;
-                var jobAbbreviation = classJobSheet?.GetRowOrDefault(member.ClassJobId)?.Abbreviation.ToString()
-                    ?? "???";
-                var contentId = member.ContentId;
-
-                // Add to CidCache if we have a valid ContentId
-                if (contentId != 0 && !string.IsNullOrEmpty(worldName))
-                {
-                    plugin.CidCache.Set(contentId, member.NameString, (ushort)member.HomeWorld, worldName);
-                }
-
-                result.Add(new PartyMemberInfo(member.NameString, worldName, jobAbbreviation, contentId, false, (ushort)member.HomeWorld));
-            }
-        }
-        catch (Exception)
-        {
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Checks whether the party list addon (<c>_PartyList</c>) or crossworld party list
-    /// addon (<c>_CrossWorldPartyList</c>) is currently visible.
-    /// </summary>
-    internal static unsafe bool IsPartyListVisible()
-    {
-        try
-        {
-            var addonPtr = PassportCheckerReborn.GameGui.GetAddonByName("_PartyList", 1);
-            if (!addonPtr.IsNull)
-            {
-                var addon = (AtkUnitBase*)addonPtr.Address;
-                if (addon->IsVisible)
-                {
-                    return true;
-                }
-            }
-
-            // Fallback: check the crossworld party list addon
-            var cwAddonPtr = PassportCheckerReborn.GameGui.GetAddonByName("_CrossWorldPartyList", 1);
-            if (!cwAddonPtr.IsNull)
-            {
-                var cwAddon = (AtkUnitBase*)cwAddonPtr.Address;
-                if (cwAddon->IsVisible)
-                {
-                    return true;
-                }
-            }
-
-        }
-        catch
-        {
-            // Ignore addon access failures
-        }
-
-        return false;
-    }
-
-    private static string BuildCompositionKey(List<PartyMemberInfo> members)
-    {
-        var parts = new List<string>();
-        foreach (var m in members)
-        {
-            parts.Add($"{m.Name}@{m.World}:{m.JobAbbreviation}");
-        }
-
-        parts.Sort();
-        return string.Join("|", parts);
-    }
-
-    /// <summary>
-    /// Initializes the duty name dropdown list from both FFLogs and Tomestone duty maps.
-    /// </summary>
-    private void InitializeDutyList()
-    {
-        var allDuties = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var name in FFLogsService.GetAllSupportedDutyNames())
-        {
-            allDuties.Add(name);
-        }
-
-        foreach (var name in TomestoneService.GetAllSupportedDutyNames())
-        {
-            allDuties.Add(name);
-        }
-
-        var sorted = new List<string>(allDuties);
-        sorted.Sort(StringComparer.OrdinalIgnoreCase);
-        sorted.Insert(0, "(None)");
-        dutyNames = [.. sorted];
-        selectedDutyIndex = 0;
-        selectedDutyName = null;
-    }
-
-    /// <summary>
-    /// Auto-fetches FFLogs and/or Tomestone data for the given party members.
-    /// Uses the selected duty name from the dropdown, falling back to the PF
-    /// current duty name.
-    /// </summary>
-    private void AutoFetchData(List<PartyMemberInfo> members, Configuration cfg)
-    {
-        if (members.Count == 0)
-        {
-            return;
-        }
-
-        if (cfg.EnableFFLogsIntegrationOverlay && !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret))
-        {
-            fflogsBatchInProgress = true;
-            _ = FetchFFLogsDataAsync(members);
-        }
-
-        if (cfg.EnableTomestoneIntegration && !string.IsNullOrEmpty(cfg.TomestoneApiKey))
-        {
-            tomestoneBatchInProgress = true;
-            _ = FetchTomestoneDataAsync(members);
-        }
-    }
-
-    /// <summary>
-    /// Returns the effective duty name to use for lookups: the dropdown selection
-    /// if one is chosen, otherwise the PF detail's current duty name.
-    /// </summary>
-    private string? GetEffectiveDutyName()
-        => selectedDutyName ??
-           (string.IsNullOrWhiteSpace(plugin.PartyFinderManager.CurrentDutyNameEnglish)
-               ? plugin.PartyFinderManager.CurrentDutyName
-               : plugin.PartyFinderManager.CurrentDutyNameEnglish);
-
-    /// <summary>
-    /// Returns the effective duty identifier for FFLogs.
-    /// </summary>
-    private (uint DutyId, string? DutyName) GetEffectiveDutyForFflogs()
-        => selectedDutyName is not null
-            ? (0, selectedDutyName)
-            : (plugin.PartyFinderManager.CurrentDutyId, plugin.PartyFinderManager.CurrentDutyName);
-
-    /// <summary>
-    /// Fetches FFLogs data for all party members.
-    /// Uses the selected duty name or the PF overlay's current duty name for
-    /// encounter-specific queries, falling back to general zone parse.
-    /// </summary>
-    private async Task FetchFFLogsDataAsync(List<PartyMemberInfo> members)
-    {
-        ArgumentNullException.ThrowIfNull(members);
-        try
-        {
-            var tempCache = new Dictionary<int, EncounterParseResult?>();
-
-            // Try to get encounter data if a duty is detected
-            var (dutyId, dutyName) = GetEffectiveDutyForFflogs();
-            var encounterIds = FFLogsService.GetEncounterIdsForDuty(dutyId, dutyName);
-
-            if (encounterIds.HasValue)
-            {
-                var memberData = new List<(string Name, string World, string JobAbbreviation)>();
-                for (var i = 0; i < members.Count; i++)
-                {
-                    memberData.Add((members[i].Name, members[i].World, members[i].JobAbbreviation));
-                }
-
-                Dictionary<int, EncounterParseResult> results;
-                if (encounterIds.Value.SecondaryEncounterId.HasValue)
-                {
-                    results = await plugin.FFLogsService.GetMultiEncounterDataForAllAsync(
-                        memberData,
-                        encounterIds.Value.PrimaryEncounterId,
-                        encounterIds.Value.SecondaryEncounterId.Value);
-                }
-                else
-                {
-                    results = await plugin.FFLogsService.GetEncounterDataForAllAsync(
-                        memberData, encounterIds.Value.PrimaryEncounterId);
-                }
-
-                foreach (var (index, result) in results)
-                {
-                    tempCache[index] = result;
-                }
-
-                for (var i = 0; i < members.Count; i++)
-                {
-                    if (!tempCache.ContainsKey(i))
-                    {
-                        tempCache[i] = new EncounterParseResult(false, true, 0, null, null, null);
-                    }
+                    results[index] = result;
                 }
             }
             else
             {
-                // Fallback: general zone parse
-                for (var i = 0; i < members.Count; i++)
+                for (var i = 0; i < party.Count; i++)
                 {
-                    var member = members[i];
-                    try
-                    {
-                        var avg = await plugin.FFLogsService.GetBestPerfAvgAsync(
-                            member.Name, member.World);
-                        tempCache[i] = avg.HasValue
-                            ? new EncounterParseResult(true, false, 0, avg.Value, null, null)
-                            : new EncounterParseResult(false, false, 0, null, null, null);
-                    }
-                    catch (Exception ex)
-                    {
-                        PassportCheckerReborn.Log.Warning(ex,
-                            $"[PartyListWindow] FFLogs lookup failed for {member.Name}@{member.World}");
-                        tempCache[i] = null;
-                    }
+                    results[i] = await plugin.FFLogsService.GetOverallParseAsync(party[i].Name, party[i].World);
                 }
             }
-
-            fflogsCache = tempCache;
         }
         catch (Exception ex)
         {
-            PassportCheckerReborn.Log.Warning(ex, "[PartyListWindow] FFLogs batch lookup failed.");
+            PassportCheckerReborn.Log.Warning(ex, "[PartyListWindow] FFLogs lookup failed.");
         }
-        finally
+
+        await PassportCheckerReborn.Framework.RunOnFrameworkThread(() =>
         {
-            fflogsBatchInProgress = false;
-        }
+            if (serial == lookupSerial)
+            {
+                fflogsResults = results;
+                fflogsLoading = false;
+            }
+        });
     }
 
-    /// <summary>
-    /// Fetches Tomestone character info for all party members in a batch.
-    /// Uses the selected duty name from the dropdown for encounter-specific data.
-    /// </summary>
-    private async Task FetchTomestoneDataAsync(List<PartyMemberInfo> members)
+    private async Task LookUpTomestoneAsync(IReadOnlyList<PartyMemberInfo> party, string? dutyName, int serial)
     {
+        var results = new Dictionary<int, TomestoneCharacterInfo?>();
         try
         {
-            var tempCache = new Dictionary<int, TomestoneCharacterInfo?>();
-            var dutyName = GetEffectiveDutyName();
-
-            for (var i = 0; i < members.Count; i++)
+            for (var i = 0; i < party.Count; i++)
             {
-                var member = members[i];
-                try
-                {
-                    var info = await plugin.TomestoneService.GetCharacterInfoAsync(
-                        member.Name, member.World, dutyName);
-                    tempCache[i] = info;
-                }
-                catch (Exception ex)
-                {
-                    PassportCheckerReborn.Log.Warning(ex,
-                        $"[PartyListWindow] Tomestone lookup failed for {member.Name}@{member.World}");
-                    tempCache[i] = null;
-                }
+                results[i] = await plugin.TomestoneService.GetCharacterInfoAsync(party[i].Name, party[i].World, dutyName);
             }
-
-            tomestoneCache = tempCache;
         }
         catch (Exception ex)
         {
-            PassportCheckerReborn.Log.Warning(ex, "[PartyListWindow] Tomestone batch lookup failed.");
+            PassportCheckerReborn.Log.Warning(ex, "[PartyListWindow] Tomestone lookup failed.");
         }
-        finally
+
+        await PassportCheckerReborn.Framework.RunOnFrameworkThread(() =>
         {
-            tomestoneBatchInProgress = false;
-        }
+            if (serial == lookupSerial)
+            {
+                tomestoneResults = results;
+                tomestoneLoading = false;
+            }
+        });
     }
 }

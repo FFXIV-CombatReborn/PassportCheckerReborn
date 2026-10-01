@@ -5,7 +5,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>Low-level drawing primitives shared by the Material widgets.</summary>
 internal static class M3Draw
 {
     private const int RailFadeBands = 6;
@@ -23,10 +22,6 @@ internal static class M3Draw
         }
     }
 
-    /// <summary>
-    /// Approximates an elevation shadow by stacking a few progressively larger, fainter rounded
-    /// rectangles behind the surface. Cheap, and reads correctly over a dark background.
-    /// </summary>
     public static void Elevation(ImDrawListPtr drawList, Vector2 min, Vector2 max, float rounding, int level)
     {
         if (level <= 0)
@@ -53,10 +48,6 @@ internal static class M3Draw
         }
     }
 
-    /// <summary>
-    /// The vertical accent rail on a card's leading edge, fading out towards both ends so it reads
-    /// as a highlight rather than a hard border.
-    /// </summary>
     public static void AccentRail(ImDrawListPtr drawList, float x, float width, float top, float bottom, Vector4 color, float fadeLength)
     {
         var height = bottom - top;
@@ -145,7 +136,7 @@ internal static class M3Draw
         drawList.AddText(UiBuilder.IconFont, ImGui.GetFontSize(), position, M3.U32(color), text);
     }
 
-    /// <summary>Draws wrapped text at an absolute screen position and returns the bottom edge.</summary>
+    // Returns the bottom edge of the text.
     public static float WrappedText(string text, Vector2 position, float wrapWidth, Vector4 color)
     {
         ImGui.SetCursorScreenPos(position);
@@ -165,10 +156,6 @@ internal static class M3Draw
     }
 }
 
-/// <summary>
-/// Per-widget animation state, keyed by ImGui id: switch thumbs sliding, selection indicators
-/// stretching between rows.
-/// </summary>
 internal static class M3Motion
 {
     private const int MaxTrackedValues = 512;
@@ -178,16 +165,11 @@ internal static class M3Motion
     public const float FastDuration = 0.14f;
     public const float EmphasisedDuration = 0.28f;
 
-    /// <summary>
-    /// Eases a stored value towards <paramref name="target"/> and returns the current position.
-    /// Frame-rate independent: the same wall-clock duration regardless of FPS.
-    /// </summary>
     public static float Approach(uint id, float target, float duration)
     {
         if (!_values.TryGetValue(id, out var current))
         {
-            // Too many live widgets means something is generating ids per frame; drop the table
-            // rather than leaking, and let the animations restart.
+            // This many live widgets means ids are being generated per frame; drop the table rather than leak.
             if (_values.Count >= MaxTrackedValues)
             {
                 _values.Clear();

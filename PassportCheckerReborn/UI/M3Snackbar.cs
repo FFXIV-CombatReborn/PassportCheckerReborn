@@ -18,8 +18,8 @@ internal static class M3Snackbar
     private static readonly Queue<Entry> Queue = [];
     private static Entry? Current;
 
-    // Both clocks run on frames the snackbar is actually drawn, so a message queued while its host
-    // window is closed still gets its full time on screen once the window opens.
+    // Both clocks only run on frames the snackbar is drawn, so a message queued while its window is
+    // closed still gets its full time on screen.
     private static float Age;
     private static float Remaining;
     private static bool Hovered;
@@ -32,7 +32,7 @@ internal static class M3Snackbar
             return;
         }
 
-        // Dropping the oldest keeps a burst of clicks from backing the queue up for a minute.
+        // Dropping the oldest keeps a burst of clicks from backing the queue up.
         while (Queue.Count >= MaxQueued)
         {
             _ = Queue.Dequeue();
@@ -41,7 +41,6 @@ internal static class M3Snackbar
         Queue.Enqueue(new Entry(message, actionLabel, onAction, MathF.Max(1f, duration)));
     }
 
-    /// <summary>Drops the message on screen and everything queued behind it.</summary>
     public static void Clear()
     {
         Queue.Clear();
@@ -110,9 +109,8 @@ internal static class M3Snackbar
         var min = new Vector2(areaMin.X + ((areaWidth - width) * 0.5f), areaMax.Y - margin - height);
         var max = min + new Vector2(width, height);
 
-        // A child window submitted after everything else is drawn — and hit-tested — above its
-        // siblings. It is sized to hold the shadow, and stays inside the area so the host window's
-        // content never grows to fit it.
+        // A child window submitted last is drawn, and hit-tested, above its siblings. It is sized to
+        // hold the shadow, and stays inside the area so the host window never grows to fit it.
         ImGui.SetCursorScreenPos(min - new Vector2(shadow, shadow));
         using var child = ImRaii.Child("##m3_snackbar", new Vector2(width, height) + new Vector2(shadow * 2f, shadow * 2f), false,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoNav);

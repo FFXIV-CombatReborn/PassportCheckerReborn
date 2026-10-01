@@ -1,3 +1,4 @@
+using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -7,12 +8,9 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
 
-/// <summary>
-/// The window's own controls, at its top right in place of a title bar, and minimizing: the window
-/// folds away into that bar, leaving a small pill that says PCR, and unfolds from it again. The bar's
-/// top right corner is the anchor. It holds still while the window folds around it, so the pill is left
-/// where the bar was, and the window unfolds from wherever the pill has been dragged since.
-/// </summary>
+// The window's own controls, in place of a title bar, and minimizing: the window folds into that bar,
+// leaving a pill that says PCR. The bar's top right corner is the anchor, which holds still while the
+// window folds around it; the window unfolds from wherever the pill has been dragged since.
 public partial class MainWindow
 {
     private const ImGuiWindowFlags BaseFlags = ImGuiWindowFlags.NoTitleBar
@@ -35,11 +33,16 @@ public partial class MainWindow
         new("##window_kofi", FontAwesomeIcon.MugHot, "Support the developer on Ko-fi"),
     ];
 
-    // The same mark the navigation column leads with.
-    private static readonly M3WindowBrand Brand = new(null, "PCR", FontAwesomeIcon.Passport);
+    private const string LogoResource = "PassportCheckerReborn.Resources.PCR_Icon.png";
 
-    // Measured by the top app bar each frame the page draws: how many actions fit, and how far the
-    // bar sits below the top of the page.
+    // Null until the texture has loaded.
+    private static IDalamudTextureWrap? Logo => PassportCheckerReborn.TextureProvider
+        .GetFromManifestResource(typeof(MainWindow).Assembly, LogoResource).GetWrapOrDefault();
+
+    private static M3WindowBrand Brand => new(Logo, "PCR", FontAwesomeIcon.Passport);
+
+    // Measured by the top app bar each frame: how many actions fit, and how far below the top of the
+    // page the bar sits.
     private int shownActions = WindowActions.Length;
     private float barTop;
 
@@ -47,8 +50,8 @@ public partial class MainWindow
     private bool minimized;
     private float minimizeTime;
 
-    // While true, the fold sets the window's position and size, from its first frame until the frame
-    // after it has unfolded again. Settled marks that last frame, applied and ready to hand back.
+    // While foldLayout is set, the fold places and sizes the window, from its first frame until the
+    // frame after it has unfolded again. foldSettled marks that last frame.
     private bool foldLayout;
     private bool foldSettled;
 
@@ -66,7 +69,7 @@ public partial class MainWindow
 
     internal bool IsMinimized => minimized;
 
-    /// <summary>The fold, eased.</summary>
+    // minimizeTime, eased.
     private float Folded
     {
         get
@@ -76,10 +79,9 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>How far in from the window's top right corner the bar sits while it is open: x in from the right, y down.</summary>
+    // How far in from the window's top right corner the bar sits while open: x from the right, y down.
     private Vector2 AnchorInset => new(openPadding.X, openPadding.Y + barTop);
 
-    /// <summary>Unfolds the window, if it is folded or folding.</summary>
     internal void Restore()
     {
         if (!minimized)
@@ -115,7 +117,7 @@ public partial class MainWindow
         minimized = true;
     }
 
-    /// <summary>Closed folded, the window opens again open, where it would have unfolded to.</summary>
+    // Closed while folded, the window next opens unfolded, where it would have unfolded to.
     private void RestoreOnClose()
     {
         if (!foldLayout)
@@ -127,11 +129,8 @@ public partial class MainWindow
         minimizeTime = 0f;
     }
 
-    /// <summary>
-    /// Advances the fold and, while it runs, sets this frame's window rect through Dalamud, which applies
-    /// it after PreDraw. Also pushes the rounding and padding Begin reads; <see cref="PopFoldStyle"/>
-    /// takes them off again once Begin has them.
-    /// </summary>
+    // Advances the fold and, while it runs, sets this frame's window rect through Dalamud, which applies
+    // it after PreDraw. Also pushes the rounding and padding Begin reads; PopFoldStyle takes them off.
     private void PrepareFold()
     {
         var style = ImGui.GetStyle();
@@ -205,7 +204,7 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The window's rect when open: its own, or, while folding, the one it folded from.</summary>
+    // The window's rect when open: its own, or, while folding, the one it folded from.
     private (Vector2 Pos, Vector2 Size) OpenRect()
     {
         if (!foldLayout)
@@ -217,10 +216,8 @@ public partial class MainWindow
         return (new Vector2(anchorOpen.X + inset.X - restoreSize.X, anchorOpen.Y - inset.Y), restoreSize);
     }
 
-    /// <summary>
-    /// Where the bar goes when the window opens around a pill at <paramref name="folded"/>, nudged so
-    /// the open window stays on the game's screen. A pill dragged out onto another monitor opens there.
-    /// </summary>
+    // Where the bar goes when the window opens around a pill at `folded`, nudged so the open window
+    // stays on the game's screen. A pill dragged onto another monitor opens there.
     private Vector2 OpenAnchorNear(Vector2 folded)
     {
         var inset = AnchorInset;
@@ -238,11 +235,8 @@ public partial class MainWindow
         return new Vector2(pos.X + restoreSize.X - inset.X, pos.Y + inset.Y);
     }
 
-    /// <summary>
-    /// The bar: Ko-fi, minimize and close, or, folded, the PCR pill. It is a child window of its own,
-    /// begun after the page, so it draws over the page and takes the mouse first while the two overlap
-    /// mid-fold. Its empty space, the PCR label included, drags the window like any other.
-    /// </summary>
+    // A child window begun after the page, so it draws over the page and takes the mouse first while
+    // the two overlap mid-fold.
     private void DrawWindowBar()
     {
         var folded = Folded;
@@ -264,7 +258,8 @@ public partial class MainWindow
             anchor = Vector2.Lerp(anchorOpen, anchorFolded, folded);
         }
 
-        var barSize = M3Widgets.WindowActionsSize(shownActions, Brand, folded);
+        var brand = Brand;
+        var barSize = M3Widgets.WindowActionsSize(shownActions, brand, folded);
         ImGui.SetCursorScreenPos(new Vector2(anchor.X - barSize.X, anchor.Y));
         using var bar = ImRaii.Child("##pcr_window_bar", barSize, false,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoBackground);
@@ -274,7 +269,7 @@ public partial class MainWindow
         }
 
         var first = WindowActions.Length - shownActions;
-        var pressed = M3Widgets.WindowActions("##pcr_window_actions", anchor, WindowActions.AsSpan(first), Brand, folded,
+        var pressed = M3Widgets.WindowActions("##pcr_window_actions", anchor, WindowActions.AsSpan(first), brand, folded,
             out var toggled, out var closed, M3.Scheme.SurfaceContainerHigh);
 
         // Indices follow WindowActions.
