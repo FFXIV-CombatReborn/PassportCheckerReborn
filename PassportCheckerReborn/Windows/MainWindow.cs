@@ -1,6 +1,5 @@
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
-using Dalamud.Utility;
 using PassportCheckerReborn.UI;
 using System;
 using System.Collections.Generic;
@@ -10,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Windows;
 
-public class MainWindow : Window, IDisposable
+public partial class MainWindow : Window, IDisposable
 {
     private enum Page
     {
@@ -80,42 +79,18 @@ public class MainWindow : Window, IDisposable
     private double copiedAt;
 
     public MainWindow(PassportCheckerReborn plugin)
-        : base("Passport Checker Reborn – Settings###PassportCheckerRebornSettings",
-               ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
+        : base("Passport Checker Reborn – Settings###PassportCheckerRebornSettings", BaseFlags)
     {
         this.plugin = plugin;
 
-        Size = new Vector2(820, 600);
+        Size = DefaultSize;
         SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(440, 360),
-            MaximumSize = new Vector2(1600, 1400)
-        };
+        SizeConstraints = DefaultSizeConstraints;
 
-        TitleBarButtons.Add(new TitleBarButton()
-        {
-            Icon = FontAwesomeIcon.MugHot,
-            ShowTooltip = () =>
-            {
-                ImGui.BeginTooltip();
-                ImGui.Text("Support the developer on Ko-fi");
-                ImGui.EndTooltip();
-            },
-            Priority = 2,
-            Click = _ =>
-            {
-                try
-                {
-                    Util.OpenLink(KofiUrl);
-                }
-                catch
-                {
-                    // ignored
-                }
-            },
-            AvailableClickthrough = true
-        });
+        // Dalamud offers these from the title bar, which this window no longer has.
+        // TODO: add these to the top app bar element maybe
+        AllowPinning = false;
+        AllowClickthrough = false;
 
         fflogsClientIdInput = Configuration.FFLogsClientId;
         fflogsClientSecretInput = Configuration.FFLogsClientSecret;
@@ -134,13 +109,25 @@ public class MainWindow : Window, IDisposable
         GC.SuppressFinalize(this);
     }
 
+    public override void OnOpen()
+    {
+        // A pin or click-through set back when the title bar offered them could no longer be undone.
+        IsPinned = false;
+        IsClickthrough = false;
+    }
+
+    // The theme goes on before ImGui.Begin: the window background, padding and rounding are all
+    // drawn by Begin, so pushing it inside Draw would leave the window's own chrome unthemed.
     public override void PreDraw()
     {
         theme = M3Style.Push();
+        PrepareFold();
     }
 
     public override void PostDraw()
     {
+        // Draw pops these as soon as Begin has them, but Draw is skipped when Begin returns false.
+        PopFoldStyle();
         theme?.Dispose();
         theme = null;
     }
@@ -155,11 +142,48 @@ public class MainWindow : Window, IDisposable
 
         M3Motion.Reset();
         M3CardHost.Reset();
+        RestoreOnClose();
     }
 
     public override void Draw()
     {
-        DrawBackdrop();
+        PopFoldStyle();
+        windowPos = ImGui.GetWindowPos();
+        windowSize = ImGui.GetWindowSize();
+
+        var folded = Folded;
+        if (folded < 1f)
+        {
+            // The page fades as it folds away, and the shrinking window clips it as it goes.
+            using var alpha = ImRaii.PushStyle(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * (1f - MathF.Min(1f, folded * 1.4f)));
+            DrawBackdrop(windowRounding);
+
+            var (openPos, openSize) = OpenRect();
+            DrawContent(openPos, openSize);
+        }
+
+        DrawWindowBar();
+
+        if (savePending && !ImGui.IsAnyItemActive())
+        {
+            Configuration.Save();
+            savePending = false;
+        }
+    }
+
+    /// <summary>
+    /// The navigation column and the page. Laid out at the window's open rect even while it folds, so
+    /// the window shrinks over the page rather than the page reflowing to fit it.
+    /// </summary>
+    private void DrawContent(Vector2 openPos, Vector2 openSize)
+    {
+        ImGui.SetCursorScreenPos(openPos + openPadding);
+        using var content = ImRaii.Child("##pcr_window_content", Vector2.Max(Vector2.One, openSize - (openPadding * 2f)), false,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoBackground);
+        if (!content)
+        {
+            return;
+        }
 
         var scale = M3.Scale;
         var available = ImGui.GetContentRegionAvail();
@@ -176,25 +200,28 @@ public class MainWindow : Window, IDisposable
         DrawNavigation(navWidth);
         ImGui.SameLine(0f, spacing);
         DrawBody();
-
-        if (savePending && !ImGui.IsAnyItemActive())
-        {
-            Configuration.Save();
-            savePending = false;
-        }
     }
 
-    /// <summary>A soft tonal wash across the top of the window.</summary>
-    private static void DrawBackdrop()
+    private static void DrawBackdrop(float rounding)
     {
         var s = M3.Scheme;
-        var windowPos = ImGui.GetWindowPos();
-        var top = windowPos.Y + ImGui.GetCursorStartPos().Y - ImGui.GetStyle().WindowPadding.Y;
+        var drawList = ImGui.GetWindowDrawList();
+        var pos = ImGui.GetWindowPos();
+        var size = ImGui.GetWindowSize();
+        var top = M3.Alpha(s.SurfaceContainer, 0.65f);
 
-        M3Draw.VerticalGradient(ImGui.GetWindowDrawList(),
-            new Vector2(windowPos.X, top),
-            new Vector2(windowPos.X + ImGui.GetWindowSize().X, top + (200f * M3.Scale)),
-            M3.Alpha(s.SurfaceContainer, 0.65f), M3.Alpha(s.Surface, 0f));
+        var min = pos;
+        var max = new Vector2(pos.X + size.X, pos.Y + MathF.Min(200f * M3.Scale, size.Y));
+        rounding = MathF.Min(rounding, (max.Y - min.Y) * 0.5f);
+
+        drawList.PushClipRect(pos, pos + size, false);
+        if (rounding > 0f)
+        {
+            drawList.AddRectFilled(min, new Vector2(max.X, min.Y + rounding), M3.U32(top), rounding, ImDrawFlags.RoundCornersTop);
+        }
+
+        M3Draw.VerticalGradient(drawList, new Vector2(min.X, min.Y + rounding), max, top, M3.Alpha(s.Surface, 0f));
+        drawList.PopClipRect();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -242,7 +269,7 @@ public class MainWindow : Window, IDisposable
             new(nameof(Page.Tomestone), "Tomestone", FontAwesomeIcon.Gem, page == Page.Tomestone,
                 "Tomestone.gg integration and API key", Badge: tomestoneNeedsSetup ? "!" : null, SeparatorAfter: true),
             new(nameof(Page.Appearance), "Appearance", FontAwesomeIcon.Palette, page == Page.Appearance,
-                "Accent color"),
+                "Accent color, text and element size"),
             new(nameof(Page.About), "About", FontAwesomeIcon.InfoCircle, page == Page.About,
                 "Commands, caches and links"),
         ];
@@ -386,13 +413,22 @@ public class MainWindow : Window, IDisposable
         _ => ("About", "Commands, caches and links"),
     };
 
-    /// <summary>The page title and subtitle above the scrolling content, with a divider beneath.</summary>
     private void DrawTopAppBar()
     {
         var s = M3.Scheme;
         var scale = M3.Scale;
         var (title, subtitle) = PageHeading(page);
-        var width = MathF.Max(64f * scale, ImGui.GetContentRegionAvail().X);
+        var fullWidth = MathF.Max(64f * scale, ImGui.GetContentRegionAvail().X);
+
+        // Minimize and close always show; the other actions leave room for a few characters of the title.
+        var shown = WindowActions.Length;
+        while (shown > 0 && M3Widgets.WindowActionsSize(shown, Brand, 0f).X + (96f * scale) > fullWidth)
+        {
+            shown--;
+        }
+
+        var barSize = M3Widgets.WindowActionsSize(shown, Brand, 0f);
+        var width = MathF.Max(32f * scale, fullWidth - barSize.X - (12f * scale));
 
         // Measured rather than placed at fixed offsets: the game font's line height does not track
         // the UI scale, so hard-coded offsets overlap.
@@ -418,7 +454,10 @@ public class MainWindow : Window, IDisposable
 
         var contentHeight = titleSize.Y + lineGap + subtitleSize.Y;
         var height = MathF.Max(52f * scale, padTop + contentHeight + padBottom);
-        ImGui.Dummy(new Vector2(width, height));
+        ImGui.Dummy(new Vector2(fullWidth, height));
+
+        shownActions = shown;
+        barTop = (height - barSize.Y) * 0.5f;
 
         var min = ImGui.GetItemRectMin();
         var max = ImGui.GetItemRectMax();
@@ -436,7 +475,7 @@ public class MainWindow : Window, IDisposable
         }
 
         drawList.AddLine(new Vector2(min.X, max.Y), max, M3.U32(s.OutlineVariant, 0.5f), 1f * scale);
-        ImGui.Dummy(new Vector2(width, M3.Space2));
+        ImGui.Dummy(new Vector2(fullWidth, M3.Space2));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -785,22 +824,20 @@ public class MainWindow : Window, IDisposable
             }
         }
 
-        using (var guide = M3ExpandableCard.Begin("tomestone_guide", "How to get an API key", ref tomestoneGuideExpanded,
-                   FontAwesomeIcon.QuestionCircle))
+        using var guide = M3ExpandableCard.Begin("tomestone_guide", "How to get an API key", ref tomestoneGuideExpanded,
+                   FontAwesomeIcon.QuestionCircle);
+        if (guide.Expanded)
         {
-            if (guide.Expanded)
+            if (StepRow(1, "Open your Tomestone account settings.", "##tomestone_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
             {
-                if (StepRow(1, "Open your Tomestone account settings.", "##tomestone_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
-                {
-                    OpenUrl(TomestoneAccountUrl);
-                }
-
-                StepRow(2, "Scroll down to the \"API access token\" section.");
-                StepRow(3, "Click \"Generate access token\".");
-                StepRow(4, "Paste the token into the field above.");
-                StepRow(5, "Click Save.");
-                StatusLine(FontAwesomeIcon.ShieldAlt, "Keep your token private. It grants access to your Tomestone account data.", s.Warning);
+                OpenUrl(TomestoneAccountUrl);
             }
+
+            StepRow(2, "Scroll down to the \"API access token\" section.");
+            StepRow(3, "Click \"Generate access token\".");
+            StepRow(4, "Paste the token into the field above.");
+            StepRow(5, "Click Save.");
+            StatusLine(FontAwesomeIcon.ShieldAlt, "Keep your token private. It grants access to your Tomestone account data.", s.Warning);
         }
     }
 
@@ -840,6 +877,26 @@ public class MainWindow : Window, IDisposable
             M3SettingRow.End(row);
 
             DrawAccentPresets();
+        }
+
+        using (M3Card.Begin("appearance_size", "Size", FontAwesomeIcon.TextHeight,
+                   subtitle: "Applies to every window of the plugin, on top of Dalamud's global scale."))
+        {
+            var textPercent = (int)MathF.Round(cfg.UiTextScale * 100f);
+            if (SliderRow("Text size", ref textPercent, 75, 175, "%",
+                    "Scales the text, on top of Dalamud's own font settings."))
+            {
+                cfg.UiTextScale = textPercent / 100f;
+                savePending = true;
+            }
+
+            var elementPercent = (int)MathF.Round(cfg.UiElementScale * 100f);
+            if (SliderRow("Element size", ref elementPercent, 75, 175, "%",
+                    "Scales the padding, spacing and controls. Turn it down for a more compact layout."))
+            {
+                cfg.UiElementScale = elementPercent / 100f;
+                savePending = true;
+            }
         }
     }
 
@@ -995,12 +1052,12 @@ public class MainWindow : Window, IDisposable
         return changed;
     }
 
-    private static bool SliderRow(string label, ref int value, int min, int max, string suffix)
+    private static bool SliderRow(string label, ref int value, int min, int max, string suffix, string? supporting = null)
     {
         var trackWidth = 150f * M3.Scale;
         var controlSize = new Vector2(trackWidth + M3Widgets.SliderValueGutter($"{max}{suffix}"), M3Widgets.ButtonHeight);
 
-        var row = M3SettingRow.Begin(label, null, controlSize);
+        var row = M3SettingRow.Begin(label, supporting, controlSize);
         ImGui.SetCursorScreenPos(row.ControlPosition);
         var changed = M3Widgets.SliderInt($"##{label}_slider", ref value, min, max, $"{value}{suffix}", trackWidth);
         M3SettingRow.End(row);
