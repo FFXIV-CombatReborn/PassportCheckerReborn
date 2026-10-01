@@ -1,181 +1,135 @@
 using Dalamud.Hooking;
-using Dalamud.Plugin.Services;
-using ECommons.GameHelpers;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
 
 namespace PassportCheckerReborn.Services
 {
-    public static class PFWindowManager
+    // Keeps the Party Finder open when the party changes. The game prints log message 947 and then
+    // calls Hide on the Party Finder agent, so the message is what marks the next Hide as the game's
+    // doing rather than the player's. Follows DailyRoutines' NoAutoClosePartyFinder.
+    public static unsafe class PFWindowManager
     {
-        private static PassportCheckerReborn? Plugin;
-        private static PartyFinderManager? PartyFinderManager;
-        private static Hook<AtkUnitBase.Delegates.Close>? CloseAddonHook;
+        // "The Party Finder has closed due to changes within the party."
+        public const uint PartyFinderClosedLogMessageId = 947;
 
-        private unsafe delegate bool CloseAddonDelegate(AtkUnitBase* unitBase, bool a1);
+        // Long enough to outlive the Hide that follows the message, short enough that an unused skip
+        // cannot swallow a close the player asks for later.
+        private const long SuppressionWindowMs = 250;
 
-        public static void Enable(PassportCheckerReborn pluginInstance, PartyFinderManager pfManager)
+        private static readonly TimeSpan ListingReloadDelay = TimeSpan.FromMilliseconds(100);
+
+        private static Hook<AgentHideDelegate>? AgentHideHook;
+        private static long SuppressHideUntil;
+
+        private delegate void AgentHideDelegate(AgentLookingForGroup* agent);
+
+        // True once hooking the game failed, so the setting cannot do anything.
+        public static bool Unavailable { get; private set; }
+
+        // Hooks or unhooks the game to match the setting.
+        public static void ApplySetting()
         {
-            Plugin = pluginInstance;
-            PartyFinderManager = pfManager;
+            if (!PassportCheckerReborn.Config.PreventAutoClosingOnPartyChanges2)
+            {
+                AgentHideHook?.Disable();
+                SuppressHideUntil = 0;
+                return;
+            }
 
-            // Initialize hooks
-            InitializeCloseHooks();
+            if (AgentHideHook == null && !Unavailable)
+            {
+                InitializeHideHook();
+            }
+
+            AgentHideHook?.Enable();
         }
 
-        public static void Disable()
+        public static void Dispose()
         {
-            // Dispose hooks
-            DisposeCloseHooks();
+            AgentHideHook?.Dispose();
+            AgentHideHook = null;
+            SuppressHideUntil = 0;
         }
 
-        private static unsafe void InitializeCloseHooks()
+        private static void InitializeHideHook()
         {
             try
             {
-                if (AtkUnitBase.StaticVirtualTablePointer == null)
+                // Hide is virtual, so its address comes from the agent's vtable rather than a signature.
+                var agent = AgentLookingForGroup.Instance();
+                var hideAddress = agent == null || agent->VirtualTable == null ? 0 : (nint)agent->VirtualTable->Hide;
+                if (hideAddress == 0)
                 {
-                    PassportCheckerReborn.Log.Warning("[PFWindowManager] StaticVirtualTablePointer is null, skipping hook initialization");
+                    PassportCheckerReborn.Log.Warning("[PFWindowManager] Party Finder agent is not available.");
+                    Unavailable = true;
                     return;
                 }
 
-                var closeAddress = (nint)AtkUnitBase.StaticVirtualTablePointer->Close;
-                if (closeAddress == 0)
-                {
-                    PassportCheckerReborn.Log.Warning("[PFWindowManager] Close address is null, skipping hook initialization");
-                    return;
-                }
-
-                CloseAddonHook = PassportCheckerReborn.GameInteropProvider.HookFromAddress<AtkUnitBase.Delegates.Close>(
-                closeAddress,
-                CloseAddonDetour);
-
-                CloseAddonHook?.Enable();
-
-                PassportCheckerReborn.Log.Debug("[PFWindowManager] Action interception hooks initialized");
+                AgentHideHook = PassportCheckerReborn.GameInteropProvider.HookFromAddress<AgentHideDelegate>(hideAddress, AgentHideDetour);
             }
             catch (Exception ex)
             {
-                PassportCheckerReborn.Log.Error($"[PFWindowManager] Failed to initialize action hooks: {ex}");
+                PassportCheckerReborn.Log.Error(ex, "[PFWindowManager] Failed to hook the Party Finder agent.");
+                Unavailable = true;
             }
         }
 
-        private static void DisposeCloseHooks()
+        // Called for log message 947. Returns true when the close will be skipped, in which case the
+        // message would be untrue and should not be shown.
+        public static bool TryInterceptClosedMessage()
         {
-            try
+            if (AgentHideHook is not { IsEnabled: true })
             {
-                CloseAddonHook?.Disable();
-                CloseAddonHook?.Dispose();
-                CloseAddonHook = null;
-
-                PassportCheckerReborn.Log.Debug("[PFWindowManager] Action interception hooks disposed");
-            }
-            catch (Exception ex)
-            {
-                PassportCheckerReborn.Log.Error($"[PFWindowManager] Failed to dispose action hooks: {ex}");
-            }
-        }
-
-        private static int TrackedPartyMemberCount;
-
-        private static int SuppressionObservedCount;
-
-        private static void OnDeferredPartyCountSync(IFramework framework)
-        {
-            PassportCheckerReborn.Framework.Update -= OnDeferredPartyCountSync;
-
-            // Prefer a fresh count, but fall back to the count that was observed when
-            // suppression triggered
-            var freshCount = PartyFinderManager.GetEffectivePartyCount();
-            TrackedPartyMemberCount = freshCount > 0 ? freshCount : SuppressionObservedCount;
-        }
-
-        private static unsafe bool CloseAddonDetour(AtkUnitBase* unitBase, bool a1)
-        {
-            if (Player.Available)
-            {
-                try
-                {
-                    var addonName = unitBase->NameString;
-
-                    // User-initiated close: always allow and clean up suppression state
-                    if (a1 == false && (addonName == "LookingForGroupDetail" || addonName == "LookingForGroup"))
-                    {
-                        // Sync tracked count to current count to prevent suppression loops
-                        var currentCount = PartyFinderManager.GetEffectivePartyCount();
-                        TrackedPartyMemberCount = currentCount;
-                        SuppressionObservedCount = 0;
-
-                        // Clean up any pending deferred sync callbacks
-                        PassportCheckerReborn.Framework.Update -= OnDeferredPartyCountSync;
-
-                        PassportCheckerReborn.Log.Information(
-                            $"[PFWindowManager] User-initiated close on {addonName} " +
-                            $"(synced trackedCount to {currentCount}).");
-
-                        return CloseAddonHook!.Original(unitBase, a1);
-                    }
-
-                    // Game-triggered close: potentially suppress if party changed
-                    if (a1 == true && (addonName == "LookingForGroupDetail" || addonName == "LookingForGroup"))
-                    {
-                        var currentCount = PartyFinderManager.GetEffectivePartyCount();
-                        PassportCheckerReborn.Log.Information(
-                            $"[PFWindowManager] Close called on {addonName} " +
-                            $"(a1={a1}, config={Plugin?.Configuration.PreventAutoClosingOnPartyChanges2}, " +
-                            $"detailOpen={PartyFinderManager?.IsDetailOpen}, listOpen={PartyFinderManager?.IsListOpen}, " +
-                            $"trackedCount={TrackedPartyMemberCount}, effectiveCount={currentCount})");
-
-                        if (Plugin?.Configuration.PreventAutoClosingOnPartyChanges2 == true
-                            && PartyFinderManager?.IsDetailOpen == true)
-                        {
-                            // Suppress if the party count changed OR if another PF addon
-                            // close in the same frame already triggered suppression (the
-                            // game fires Close on both addons in one pass).
-                            // Never suppress when the effective count is 0 — that means the
-                            // party disbanded or the player left entirely, so there is no
-                            // active party left to justify keeping PF open.  Continued
-                            // suppression in that state would lock the user out of closing
-                            // the window manually.
-                            if (currentCount > 0 && currentCount != TrackedPartyMemberCount)
-                            {
-                                SuppressionObservedCount = currentCount;
-                                PassportCheckerReborn.Framework.Update -= OnDeferredPartyCountSync;
-                                PassportCheckerReborn.Framework.Update += OnDeferredPartyCountSync;
-
-                                PassportCheckerReborn.Log.Information(
-                                    $"[PFWindowManager] SUPPRESSING close for {addonName} " +
-                                    $"(party: {TrackedPartyMemberCount} → {currentCount}).");
-                                return false;
-                            }
-
-                            // If suppression was active but the party is now gone, clean up
-                            // the deferred sync so it doesn't fire stale.
-                            if (currentCount == 0)
-                            {
-                                SuppressionObservedCount = 0;
-                                PassportCheckerReborn.Framework.Update -= OnDeferredPartyCountSync;
-                            }
-
-                            PassportCheckerReborn.Log.Information($"[PFWindowManager] Allowing close for {addonName} (currentCount={currentCount}, tracked={TrackedPartyMemberCount}).");
-                            TrackedPartyMemberCount = currentCount;
-                            return CloseAddonHook!.Original(unitBase, a1);
-                        }
-                    }
-
-                }
-                catch (Exception)
-                {
-
-                }
+                return false;
             }
 
-            if (CloseAddonHook?.Original != null)
-            {
-                return CloseAddonHook.Original(unitBase, a1);
-            }
-
+            SuppressHideUntil = Environment.TickCount64 + SuppressionWindowMs;
             return true;
+        }
+
+        private static void AgentHideDetour(AgentLookingForGroup* agent)
+        {
+            if (Environment.TickCount64 > SuppressHideUntil)
+            {
+                AgentHideHook!.Original(agent);
+                return;
+            }
+
+            // One message arms one skip.
+            SuppressHideUntil = 0;
+
+            try
+            {
+                ReloadOpenListing(agent);
+            }
+            catch (Exception ex)
+            {
+                PassportCheckerReborn.Log.Warning(ex, "[PFWindowManager] Failed to reload the open listing.");
+            }
+        }
+
+        // The listing on screen is the one most likely to have just changed, so it is closed and
+        // requested again rather than left showing the party as it was.
+        private static void ReloadOpenListing(AgentLookingForGroup* agent)
+        {
+            var listingId = agent->LastViewedListing.ListingId;
+            var detailPtr = PassportCheckerReborn.GameGui.GetAddonByName("LookingForGroupDetail", 1);
+            if (listingId == 0 || detailPtr.IsNull)
+            {
+                return;
+            }
+
+            ((AtkUnitBase*)detailPtr.Address)->Close(true);
+
+            PassportCheckerReborn.Framework.RunOnTick(() =>
+            {
+                var current = AgentLookingForGroup.Instance();
+                if (current != null && current->IsAgentActive())
+                {
+                    current->OpenListing(listingId);
+                }
+            }, ListingReloadDelay);
         }
     }
 }

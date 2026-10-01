@@ -4,13 +4,11 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>Material Design 3 stuff: the resolved scheme, shape and spacing scales, state-layer opacities and fonts.</summary>
 internal static class M3
 {
     public static readonly Vector4 DefaultSeed = M3ColorMath.FromRgb(0xB0201F);
 
-    // The seed as configured, not as resolved: remembering the fallback instead would make every
-    // access see a changed seed and rebuild the scheme, for as long as an unusable colour is set.
+    // The seed as configured, not as resolved, or an unusable colour would rebuild the scheme on every access.
     private static Vector4 ConfiguredSeed = DefaultSeed;
     private static M3Scheme Schemeseed = M3Scheme.FromSeed(DefaultSeed);
 
@@ -46,8 +44,7 @@ internal static class M3
             {
                 ConfiguredSeed = seed;
 
-                // A desaturated or pitch-black seed resolves to an unusable grey scheme, so fall back
-                // to the plugin default rather than leaving the user with no accent at all.
+                // A grey or black seed makes an unusable scheme, so the default stands in for it.
                 M3ColorMath.ToLch(seed, out var lightness, out var chroma, out _);
                 Schemeseed = M3Scheme.FromSeed(lightness < 5f || chroma < 2f ? DefaultSeed : seed);
             }
@@ -72,7 +69,6 @@ internal static class M3
     public const float DisabledContent = 0.38f;
     public const float DisabledContainer = 0.12f;
 
-    /// <summary>Body text: Dalamud's default font at <see cref="TextScale"/>.</summary>
     public static ImFontPtr Body => FontManager.GetDefaultFont(TextScale);
     public static ImFontPtr HeadlineSmall => FontManager.GetFont(22f * TextScale);
     public static ImFontPtr TitleLarge => FontManager.GetFont(19f * TextScale);
@@ -99,7 +95,6 @@ internal static class M3
         return color with { W = alpha };
     }
 
-    /// <summary>Composites a state layer: the content colour over the container at the interaction's opacity.</summary>
     public static Vector4 StateLayer(Vector4 container, Vector4 content, bool hovered, bool active)
     {
         if (!hovered && !active)

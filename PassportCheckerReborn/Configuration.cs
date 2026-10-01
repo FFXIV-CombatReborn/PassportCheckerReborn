@@ -4,9 +4,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn;
 
-/// <summary>
-/// Determines where the Party List Overlay is positioned relative to the in-game party list.
-/// </summary>
 public enum PartyListOverlayPosition
 {
     Left,
@@ -21,21 +18,19 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
 
-    // ── General ─ Party Finder Detail Optimizations ─────────────────────────
     public bool SpecialBorderColorForKnownPlayers { get; set; } = false;
     public Vector4 KnownPlayerBorderColor { get; set; } = new Vector4(0.2f, 0.8f, 0.2f, 1.0f);
     public bool ShowPartyJobIcons { get; set; } = true;
     public bool PreventAutoClosingOnPartyChanges2 { get; set; } = false;
 
-    // ── General ─ Party Finder List Optimizations ────────────────────────────
     public bool EnableTrueTimeBasedSorting { get; set; } = false;
+    public bool TimeSortNewestFirst { get; set; } = true;
     public bool ExpandListingsTo100PerPage { get; set; } = false;
     public bool EnableAutomaticRefresh { get; set; } = false;
     public int AutoRefreshIntervalSeconds { get; set; } = 30;
     public bool EnableOneClickJobFilter { get; set; } = false;
     public bool RightClickPlayerNameForRecruitment3 { get; set; } = false;
 
-    // ── Overlay ───────────────────────────────────────────────────────────────
     public bool ShowMemberInfoOverlay { get; set; } = true;
     public bool OnlyShowOverlayForHighEndDuties { get; set; } = true;
     public bool ShowOverlayOnLeftSide { get; set; } = true;
@@ -47,25 +42,27 @@ public class Configuration : IPluginConfiguration
     public bool HidePartyListInDuty { get; set; } = true;
     public bool HidePartyListInCombat { get; set; } = true;
 
-    // ── Blacklist ─────────────────────────────────────────────────────────────
     public bool EnableBlacklistFeature { get; set; } = true;
 
-    // ── Tomestone Integration ────────────────────────────────────────────────
     public string TomestoneApiKey { get; set; } = string.Empty;
 
-    // ── FFLogs Integration ───────────────────────────────────────────────────
     public string FFLogsClientId { get; set; } = string.Empty;
     public string FFLogsClientSecret { get; set; } = string.Empty;
 
-    // ── Appearance ───────────────────────────────────────────────────────────
-    /// <summary>Seed colour the Material theme generates every window's palette from.</summary>
     public Vector4 UiAccentColor { get; set; } = UI.M3.DefaultSeed;
-
-    /// <summary>Scales the text in every window, on top of Dalamud's own font settings.</summary>
     public float UiTextScale { get; set; } = 1f;
-
-    /// <summary>Scales the padding, spacing and controls in every window.</summary>
     public float UiElementScale { get; set; } = 1f;
+
+    // Methods rather than properties, so they are not written to the config file.
+    public bool HasFFLogsCredentials()
+    {
+        return !string.IsNullOrEmpty(FFLogsClientId) && !string.IsNullOrEmpty(FFLogsClientSecret);
+    }
+
+    public bool HasTomestoneKey()
+    {
+        return !string.IsNullOrEmpty(TomestoneApiKey);
+    }
 
     public void Save()
     {

@@ -3,11 +3,8 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>
-/// A small tonal tag that sits on a line of text, such as a status marker after a player's name.
-/// It reserves the frame height and centres itself in it, so it lines up with text placed by
-/// <c>ImGui.AlignTextToFramePadding</c> and with framed widgets on the same line.
-/// </summary>
+// A tag on a line of text. It reserves the frame height and centres itself in it, to line up with
+// frame-aligned text and framed widgets.
 internal static class M3Badge
 {
     public static void Draw(string label, Vector4 accent, string? tooltip = null)

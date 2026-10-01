@@ -6,7 +6,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>One option in a <see cref="M3Widgets.SegmentedButtons"/> group.</summary>
 internal readonly record struct M3Segment(
     string Label,
     FontAwesomeIcon Icon = FontAwesomeIcon.None,
@@ -19,19 +18,10 @@ internal readonly record struct M3WindowBrand(IDalamudTextureWrap? Logo, string 
 
 internal enum M3ButtonStyle
 {
-    /// <summary>High emphasis: solid primary fill.</summary>
     Filled,
-
-    /// <summary>Medium emphasis: secondary container fill.</summary>
     Tonal,
-
-    /// <summary>Medium emphasis: outlined, transparent fill.</summary>
     Outlined,
-
-    /// <summary>Low emphasis: no container at all.</summary>
     Text,
-
-    /// <summary>Destructive action: error container fill.</summary>
     Danger,
 }
 
@@ -80,7 +70,6 @@ internal static class M3Widgets
         drawList.AddRectFilled(trackMin, trackMax, M3.U32(trackFill, dim), trackRadius);
         drawList.AddRect(trackMin, trackMax, M3.U32(trackOutline, 0.9f * dim), trackRadius, ImDrawFlags.None, 2f * scale);
 
-        // The thumb is 16dp unselected, 24dp selected, and swells to 28dp while pressed.
         var thumbDiameter = float.Lerp(16f, 24f, progress) * scale;
         if (held)
         {
@@ -101,7 +90,6 @@ internal static class M3Widgets
 
         drawList.AddCircleFilled(thumbCenter, thumbRadius, M3.U32(thumbColor, dim), 24);
 
-        // Selected switches carry a check glyph inside the thumb, per the M3 spec.
         if (progress > 0.55f)
         {
             var tick = thumbRadius * 0.45f;
@@ -471,7 +459,6 @@ internal static class M3Widgets
             drawList.AddCircleFilled(center, radius, M3.U32(content, held ? M3.StatePressed : M3.StateHover), 32);
         }
 
-        // An unselected outlined toggle keeps its ring; once selected, the inverse fill replaces it.
         if (style == M3ButtonStyle.Outlined && !selected)
         {
             drawList.AddCircle(center, radius, M3.U32(s.Outline, 0.8f), 32, 1f * M3.Scale);
@@ -666,8 +653,7 @@ internal static class M3Widgets
             drawList.AddCircleFilled(center, size.X * 0.5f, M3.U32(content, held ? M3.StatePressed : M3.StateHover), 32);
         }
 
-        // Turned about the middle of its bounds, so it spins in place. Wound clockwise, which ImGui's
-        // anti-aliased fill needs.
+        // Wound clockwise, which ImGui's anti-aliased fill needs.
         var halfWidth = 5f * scale;
         var halfHeight = 3.5f * scale;
         var (sin, cos) = MathF.SinCos(angle);
@@ -747,7 +733,6 @@ internal static class M3Widgets
             var segmentMax = segmentMin + new Vector2(segmentWidth, height);
             var tone = segment.Accent ?? s.Primary;
 
-            // Only the outer edges of the group are rounded, so the segments read as one control.
             var corners = segments.Length == 1 ? ImDrawFlags.RoundCornersAll
                 : i == 0 ? ImDrawFlags.RoundCornersLeft
                 : i == segments.Length - 1 ? ImDrawFlags.RoundCornersRight
@@ -780,7 +765,6 @@ internal static class M3Widgets
 
             drawList.AddText(new Vector2(cursorX, segmentMin.Y + ((height - textSize.Y) * 0.5f)), M3.U32(content), segment.Label);
 
-            // Dividers sit between segments only.
             if (i > 0)
             {
                 drawList.AddLine(segmentMin + new Vector2(0f, 1f * scale), new Vector2(segmentMin.X, segmentMax.Y - (1f * scale)),
@@ -955,7 +939,6 @@ internal static class M3Widgets
         return clicked;
     }
 
-    /// <summary>Width of an input chip's trailing remove target.</summary>
     private static float InputChipRemoveWidth => ChipHeight;
 
     public static float InputChipWidth(string label, FontAwesomeIcon icon = FontAwesomeIcon.None)
@@ -1043,10 +1026,7 @@ internal static class M3Widgets
         return pressed;
     }
 
-    /// <summary>
-    /// Size of a badge: a 6dp dot when <paramref name="text"/> is empty, otherwise a pill at least as
-    /// wide as it is tall.
-    /// </summary>
+    // A dot when the text is empty, otherwise a pill at least as wide as it is tall.
     public static Vector2 BadgeSize(string? text)
     {
         var scale = M3.Scale;
@@ -1061,16 +1041,12 @@ internal static class M3Widgets
         return new Vector2(MathF.Max(height, textSize.X + (8f * scale)), height);
     }
 
-    /// <summary>A badge's text for a count, capped the way Material caps it.</summary>
     public static string BadgeCount(int count)
     {
         return count > 999 ? "999+" : count.ToString();
     }
 
-    /// <summary>
-    /// Pins a Material badge — a dot, or a short count — inside the top-right corner of the last item,
-    /// an icon button say. Draws only; it takes no layout space.
-    /// </summary>
+    // Pinned inside the top-right corner of the last item. Draws only; it takes no layout space.
     public static void Badge(string? text = null, Vector4? color = null)
     {
         var size = BadgeSize(text);
@@ -1079,7 +1055,7 @@ internal static class M3Widgets
         BadgeAt(new Vector2(max.X - (size.X * 0.5f), min.Y + (size.Y * 0.5f)), text, color);
     }
 
-    /// <summary>Draws a badge centred on <paramref name="center"/>. Draws only; it takes no layout space.</summary>
+    // Draws only; it takes no layout space.
     public static void BadgeAt(Vector2 center, string? text = null, Vector4? color = null)
     {
         var s = M3.Scheme;
@@ -1099,8 +1075,8 @@ internal static class M3Widgets
         using var font = ImRaii.PushFont(M3.LabelSmall);
         var textSize = ImGui.CalcTextSize(text);
 
-        // The error palette's "on" colour is the one tuned against this fill; any other fill gets
-        // whichever of the two extremes reads against it.
+        // The error palette's "on" colour is tuned against its fill; any other fill gets whichever
+        // extreme reads against it.
         var onFill = color is null ? s.OnError : M3.ContentOn(fill);
         drawList.AddText(center - (textSize * 0.5f), M3.U32(onFill), text);
     }
@@ -1165,8 +1141,7 @@ internal static class M3Widgets
         var rounding = size.Y * 0.5f;
         var gap = MathF.Min(4f * scale, size.Y);
 
-        // One two-second cycle: the first segment's head leads and its tail follows, then a second,
-        // shorter segment sweeps through behind it.
+        // Each cycle a long segment sweeps through, then a shorter one behind it.
         const float Period = 2f;
         var t = (float)(ImGui.GetTime() % Period) / Period;
         Span<Vector2> segments =
@@ -1243,17 +1218,15 @@ internal static class M3Widgets
             return;
         }
 
-        // Each cycle the head runs out to three quarters of a turn and the tail catches it up. Every
-        // cycle ends three quarters further round than it began, so that offset accumulates, or the
-        // arc would jump back at each restart.
+        // Each cycle the head runs out three quarters of a turn and the tail catches it up, so every
+        // cycle ends that much further round; the offset accumulates, or the arc would jump back.
         const float Cycle = 1.333f;
         var time = (float)ImGui.GetTime();
         var cycles = MathF.Floor(time / Cycle);
         var phase = (time - (cycles * Cycle)) / Cycle;
         var head = Ease(phase / 0.5f) * 0.75f;
         var tail = Ease((phase - 0.5f) / 0.5f) * 0.75f;
-        // Wrapped to one turn, since the arc is periodic; left to grow, the angles would lose
-        // precision over a long session.
+        // Wrapped to one turn: left to grow, the angles would lose precision over a long session.
         var start = ((time * 0.25f) + (cycles * 0.75f) + tail) % 1f;
         var end = start + (head - tail) + 0.03f;
 
@@ -1261,14 +1234,13 @@ internal static class M3Widgets
         RoundCaps(drawList, center, radius, start, end, s.Primary, stroke);
     }
 
-    /// <summary>Smoothstep, clamped: the easing both indeterminate indicators move on.</summary>
     private static float Ease(float t)
     {
         t = Math.Clamp(t, 0f, 1f);
         return t * t * (3f - (2f * t));
     }
 
-    /// <summary>ImGui strokes paths with square ends; a dot at each end of an arc rounds them off.</summary>
+    // ImGui strokes paths with square ends; a dot at each end of an arc rounds them off.
     private static void RoundCaps(ImDrawListPtr drawList, Vector2 center, float radius, float from, float to, Vector4 color, float thickness)
     {
         RoundCap(drawList, center, radius, from, color, thickness);
@@ -1394,7 +1366,6 @@ internal static class M3Widgets
         }
     }
 
-    /// <summary>Width taken by the value readout drawn to the right of a slider.</summary>
     public static float SliderValueGutter(string longestValue)
     {
         return ImGui.CalcTextSize(longestValue).X + (14f * M3.Scale);
@@ -1620,8 +1591,7 @@ internal static class M3Widgets
         var trailingWidth = error ? M3Draw.MeasureIcon(FontAwesomeIcon.ExclamationCircle).X + (12f * scale) : 0f;
         var textRight = max.X - paddingX - trailingWidth;
 
-        // The native input keeps editing, selection and the clipboard; only its frame is hidden. Its own
-        // padding is backed out so the text lines up exactly with the resting label.
+        // The native input's own padding is backed out, so its text lines up with the resting label.
         var inputLeft = textLeft - framePadding;
         ImGui.SetCursorScreenPos(new Vector2(inputLeft, min.Y + ((height - ImGui.GetFrameHeight()) * 0.5f)));
         ImGui.SetNextItemWidth(MathF.Max(24f * scale, textRight + framePadding - inputLeft));
@@ -1640,7 +1610,6 @@ internal static class M3Widgets
         var accent = error ? s.Error : focused ? s.Primary : hovered ? s.OnSurface : s.Outline;
         var labelColor = error ? s.Error : focused ? s.Primary : s.OnSurfaceVariant;
 
-        // The notch opens with the label, sized to where the label will come to rest.
         var hasLabel = !string.IsNullOrEmpty(label);
         var floatingX = min.X + paddingX;
         var notchStart = floatingX - (4f * scale);
@@ -1651,8 +1620,8 @@ internal static class M3Widgets
 
         if (hasLabel)
         {
-            // The body font drawn at a shrinking size, so the label scales smoothly between the two
-            // positions rather than snapping from one font to the other.
+            // The body font at a shrinking size, so the label scales smoothly rather than snapping
+            // from one font to the other.
             var restingPosition = new Vector2(textLeft, min.Y + ((height - bodyFontSize) * 0.5f));
             var floatingPosition = new Vector2(floatingX, min.Y - (smallFontSize * 0.5f));
             drawList.AddText(ImGui.GetFont(), float.Lerp(bodyFontSize, smallFontSize, floating),

@@ -1,5 +1,6 @@
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
+using PassportCheckerReborn.Services;
 using PassportCheckerReborn.UI;
 using System;
 using System.Collections.Generic;
@@ -9,7 +10,7 @@ using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Windows;
 
-public partial class MainWindow : Window, IDisposable
+public partial class MainWindow : Window
 {
     private enum Page
     {
@@ -27,14 +28,13 @@ public partial class MainWindow : Window, IDisposable
     private const string FFLogsExampleClientName = "PassportCheckerReborn";
     private const string FFLogsExampleRedirectUrl = "https://example.com/";
     private const string TomestoneAccountUrl = "https://tomestone.gg/profile/account";
-    private const string Unavailable = "Not available yet.";
+    private const string Unavailable = "Not available on this game version; it needs a plugin update.";
 
-    /// <summary>Content width (unscaled) below which the navigation drawer collapses to an icon rail.</summary>
+    // Unscaled content width below which the navigation drawer collapses to an icon rail.
     private const float DrawerLayoutWidth = 620f;
     private const float DrawerWidth = 188f;
     private const float RailWidth = 84f;
 
-    /// <summary>How long a guide's copy button reads "Copied" after a click, in seconds.</summary>
     private const double CopiedFeedbackSeconds = 1.5;
 
     private static readonly string[] OverlayPositionNames = Enum.GetNames<PartyListOverlayPosition>();
@@ -43,6 +43,12 @@ public partial class MainWindow : Window, IDisposable
     [
         new("Left", FontAwesomeIcon.ArrowLeft),
         new("Right", FontAwesomeIcon.ArrowRight),
+    ];
+
+    private static readonly M3Segment[] TimeSortSegments =
+    [
+        new("Newest first", FontAwesomeIcon.SortAmountDown),
+        new("Oldest first", FontAwesomeIcon.SortAmountUp),
     ];
 
     private static readonly (string Name, Vector4 Color)[] AccentPresets =
@@ -57,13 +63,12 @@ public partial class MainWindow : Window, IDisposable
     ];
 
     private readonly PassportCheckerReborn plugin;
-    private readonly string version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?";
 
     private M3Style.Scope? theme;
     private Page page = Page.General;
 
-    // Sliders and colour pickers change the config every frame while dragged, so their writes to
-    // disk wait until the control is let go.
+    // Sliders and colour pickers change the config every frame while dragged, so the save waits
+    // until they are let go.
     private bool savePending;
 
     private string fflogsClientIdInput;
@@ -101,13 +106,8 @@ public partial class MainWindow : Window, IDisposable
 
     private static Vector4 Muted => M3.Alpha(M3.Scheme.OnSurfaceVariant, 0.9f);
 
-    /// <summary>Horizontal padding inside <see cref="M3SettingRow"/>, used to line other content up with row text.</summary>
+    // M3SettingRow's horizontal padding, to line other content up with row text.
     private static float RowInset => 12f * M3.Scale;
-
-    public void Dispose()
-    {
-        GC.SuppressFinalize(this);
-    }
 
     public override void OnOpen()
     {
@@ -116,8 +116,7 @@ public partial class MainWindow : Window, IDisposable
         IsClickthrough = false;
     }
 
-    // The theme goes on before ImGui.Begin: the window background, padding and rounding are all
-    // drawn by Begin, so pushing it inside Draw would leave the window's own chrome unthemed.
+    // The theme goes on before ImGui.Begin, which draws the window's own background and rounding.
     public override void PreDraw()
     {
         theme = M3Style.Push();
@@ -154,7 +153,6 @@ public partial class MainWindow : Window, IDisposable
         var folded = Folded;
         if (folded < 1f)
         {
-            // The page fades as it folds away, and the shrinking window clips it as it goes.
             using var alpha = ImRaii.PushStyle(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * (1f - MathF.Min(1f, folded * 1.4f)));
             DrawBackdrop(windowRounding);
 
@@ -171,10 +169,8 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    /// <summary>
-    /// The navigation column and the page. Laid out at the window's open rect even while it folds, so
-    /// the window shrinks over the page rather than the page reflowing to fit it.
-    /// </summary>
+    // Laid out at the window's open rect even while it folds, so the window shrinks over the page
+    // rather than the page reflowing to fit it.
     private void DrawContent(Vector2 openPos, Vector2 openSize)
     {
         ImGui.SetCursorScreenPos(openPos + openPadding);
@@ -224,9 +220,6 @@ public partial class MainWindow : Window, IDisposable
         drawList.PopClipRect();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Navigation
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawNavigation(float width)
     {
         using var child = ImRaii.Child("##pcr_nav", new Vector2(width, -1f), false, ImGuiWindowFlags.NoScrollbar);
@@ -255,8 +248,8 @@ public partial class MainWindow : Window, IDisposable
     private List<M3NavItem> BuildNavItems()
     {
         var cfg = Configuration;
-        var fflogsNeedsSetup = cfg.EnableFFLogsIntegrationOverlay && !HasFFLogsCredentials(cfg);
-        var tomestoneNeedsSetup = cfg.EnableTomestoneIntegration && string.IsNullOrEmpty(cfg.TomestoneApiKey);
+        var fflogsNeedsSetup = cfg.EnableFFLogsIntegrationOverlay && !cfg.HasFFLogsCredentials();
+        var tomestoneNeedsSetup = cfg.EnableTomestoneIntegration && !cfg.HasTomestoneKey();
 
         return
         [
@@ -275,7 +268,6 @@ public partial class MainWindow : Window, IDisposable
         ];
     }
 
-    /// <summary>The plugin's mark at the top of the navigation column; a shortcut to the About page.</summary>
     private void DrawBrand(bool expanded)
     {
         var s = M3.Scheme;
@@ -300,8 +292,15 @@ public partial class MainWindow : Window, IDisposable
             ? new Vector2(min.X + (8f * scale) + (badge * 0.5f), min.Y + (height * 0.5f))
             : new Vector2(min.X + (width * 0.5f), min.Y + (height * 0.5f));
         var half = new Vector2(badge * 0.5f);
-        drawList.AddCircleFilled(center, badge * 0.5f, M3.U32(s.PrimaryContainer), 32);
-        M3Draw.IconCentered(drawList, FontAwesomeIcon.Passport, center - half, center + half, s.OnPrimaryContainer);
+        if (Logo is { } logo)
+        {
+            drawList.AddImage(logo.Handle, center - half, center + half, Vector2.Zero, Vector2.One, M3.U32(Vector4.One));
+        }
+        else
+        {
+            drawList.AddCircleFilled(center, badge * 0.5f, M3.U32(s.PrimaryContainer), 32);
+            M3Draw.IconCentered(drawList, FontAwesomeIcon.Passport, center - half, center + half, s.OnPrimaryContainer);
+        }
 
         if (expanded)
         {
@@ -347,19 +346,15 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    /// <summary>The installed version, pinned to the bottom of the navigation column.</summary>
     private void DrawVersionFooter()
     {
-        var label = $"v{version}";
+        var label = $"v{PassportCheckerReborn.Version}";
         var size = M3Widgets.PillSize(label, FontAwesomeIcon.CodeBranch);
         var bottom = ImGui.GetCursorPosY() + ImGui.GetContentRegionAvail().Y - size.Y;
         ImGui.SetCursorPosY(MathF.Max(ImGui.GetCursorPosY() + M3.Space2, bottom));
         _ = M3Widgets.Pill("##pcr_version", label, M3.Scheme.OnSurfaceVariant, FontAwesomeIcon.CodeBranch, "Installed version");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Body
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawBody()
     {
         using var body = ImRaii.Child("##pcr_body", new Vector2(-1f, -1f), false,
@@ -430,8 +425,7 @@ public partial class MainWindow : Window, IDisposable
         var barSize = M3Widgets.WindowActionsSize(shown, Brand, 0f);
         var width = MathF.Max(32f * scale, fullWidth - barSize.X - (12f * scale));
 
-        // Measured rather than placed at fixed offsets: the game font's line height does not track
-        // the UI scale, so hard-coded offsets overlap.
+        // Measured rather than placed at fixed offsets: the game font's line height does not track the UI scale.
         var padTop = 6f * scale;
         var padBottom = 8f * scale;
         var lineGap = 2f * scale;
@@ -478,9 +472,6 @@ public partial class MainWindow : Window, IDisposable
         ImGui.Dummy(new Vector2(fullWidth, M3.Space2));
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // General
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawGeneralPage()
     {
         var cfg = Configuration;
@@ -513,18 +504,56 @@ public partial class MainWindow : Window, IDisposable
             }
 
             var keepOpen = cfg.PreventAutoClosingOnPartyChanges2;
-            SwitchRow("Keep the listing open when your party changes",
-                "Stops the Party Finder window closing itself when your party changes. Temporarily unavailable while it's being fixed.",
-                ref keepOpen, enabled: false);
+            if (SwitchRow("Keep the listing open when your party changes",
+                    WhenAvailable("Stops the Party Finder closing itself when your party changes, and reloads the listing you were viewing.",
+                        PFWindowManager.Unavailable),
+                    ref keepOpen, enabled: !PFWindowManager.Unavailable))
+            {
+                cfg.PreventAutoClosingOnPartyChanges2 = keepOpen;
+                cfg.Save();
+                PFWindowManager.ApplySetting();
+            }
         }
 
         using (M3Card.Begin("general_listings", "Listings", FontAwesomeIcon.ListUl))
         {
+            var tweaks = plugin.PartyFinderListTweaks;
+
             var sorting = cfg.EnableTrueTimeBasedSorting;
-            SwitchRow("True time-based sorting", Unavailable, ref sorting, enabled: false);
+            if (SwitchRow("True time-based sorting",
+                    WhenAvailable("Orders each page by the time listings have left, instead of grouping them by duty.",
+                        tweaks.SortingUnavailable),
+                    ref sorting, enabled: !tweaks.SortingUnavailable))
+            {
+                cfg.EnableTrueTimeBasedSorting = sorting;
+                cfg.Save();
+                tweaks.ApplySorting();
+                tweaks.RefreshListings();
+            }
+
+            if (cfg.EnableTrueTimeBasedSorting && !tweaks.SortingUnavailable)
+            {
+                using var group = M3SubGroup.Begin();
+                var order = SegmentedRow("Order", "The Party Finder's own sort button flips it.",
+                    "time_sort_order", TimeSortSegments, cfg.TimeSortNewestFirst ? 0 : 1);
+                if (order >= 0)
+                {
+                    cfg.TimeSortNewestFirst = order == 0;
+                    cfg.Save();
+                    tweaks.RefreshListings();
+                }
+            }
 
             var expand = cfg.ExpandListingsTo100PerPage;
-            SwitchRow("Show 100 listings per page", Unavailable, ref expand, enabled: false);
+            if (SwitchRow("Show 100 listings per page",
+                    WhenAvailable("Asks the server for 100 listings at a time instead of 50.", tweaks.PageSizeUnavailable),
+                    ref expand, enabled: !tweaks.PageSizeUnavailable))
+            {
+                cfg.ExpandListingsTo100PerPage = expand;
+                cfg.Save();
+                tweaks.ApplyPageSize();
+                tweaks.RefreshListings();
+            }
 
             var autoRefresh = cfg.EnableAutomaticRefresh;
             if (SwitchRow("Refresh listings automatically", "Reloads the Party Finder list on a timer while you're browsing it.", ref autoRefresh))
@@ -545,10 +574,29 @@ public partial class MainWindow : Window, IDisposable
             }
 
             var jobFilter = cfg.EnableOneClickJobFilter;
-            SwitchRow("One-click job filter button", $"High-end duties only. {Unavailable}", ref jobFilter, enabled: false);
+            if (SwitchRow("One-click job filter button",
+                    "Adds a button above the Party Finder that hides high-end duty listings with no open slot for your current job.",
+                    ref jobFilter))
+            {
+                cfg.EnableOneClickJobFilter = jobFilter;
+                cfg.Save();
+
+                // A filter left on would keep hiding listings with no button left to turn it off.
+                if (!jobFilter && tweaks.JobFilterActive)
+                {
+                    tweaks.ToggleJobFilter();
+                }
+            }
 
             var rightClick = cfg.RightClickPlayerNameForRecruitment3;
-            SwitchRow("Right-click a name to view their recruitment", Unavailable, ref rightClick, enabled: false);
+            if (SwitchRow("Right-click a name to view their recruitment",
+                    "Adds View Recruitment to a player's context menu, which opens their Party Finder listing.",
+                    ref rightClick))
+            {
+                cfg.RightClickPlayerNameForRecruitment3 = rightClick;
+                cfg.Save();
+                plugin.PartyFinderManager.ApplyContextMenuSetting();
+            }
         }
 
         using (M3Card.Begin("general_blacklist", "Blacklist", FontAwesomeIcon.UserSlash))
@@ -563,14 +611,11 @@ public partial class MainWindow : Window, IDisposable
             if (ButtonRow("Refresh blacklist", "Re-reads your blacklist from the game and saves it.",
                     "##blacklist_refresh", "Refresh", FontAwesomeIcon.Sync))
             {
-                plugin.PartyFinderManager.ForceRefreshBlacklist();
+                plugin.PartyFinderManager.RefreshBlacklist();
             }
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Overlays
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawOverlaysPage()
     {
         var cfg = Configuration;
@@ -661,15 +706,12 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // FFLogs
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawFFLogsPage()
     {
         var cfg = Configuration;
         var s = M3.Scheme;
 
-        if (cfg.EnableFFLogsIntegrationOverlay && !HasFFLogsCredentials(cfg))
+        if (cfg.EnableFFLogsIntegrationOverlay && !cfg.HasFFLogsCredentials())
         {
             M3Widgets.Banner("##fflogs_missing", "FFLogs is turned on, but no API client is saved yet. Add one below.",
                 M3Severity.Warning, FontAwesomeIcon.ExclamationTriangle);
@@ -746,9 +788,7 @@ public partial class MainWindow : Window, IDisposable
         fflogsTestMessage = string.Empty;
         fflogsTestInProgress = true;
 
-        _ = TestFFLogsCredentialsAsync().ContinueWith(
-            t => PassportCheckerReborn.Log.Warning(t.Exception, "[PassportCheckerReborn] Unhandled error in credential test."),
-            TaskContinuationOptions.OnlyOnFaulted);
+        _ = TestFFLogsCredentialsAsync();
     }
 
     private async Task TestFFLogsCredentialsAsync()
@@ -775,15 +815,12 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Tomestone
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawTomestonePage()
     {
         var cfg = Configuration;
         var s = M3.Scheme;
 
-        if (cfg.EnableTomestoneIntegration && string.IsNullOrEmpty(cfg.TomestoneApiKey))
+        if (cfg.EnableTomestoneIntegration && !cfg.HasTomestoneKey())
         {
             M3Widgets.Banner("##tomestone_missing", "Tomestone is turned on, but no API key is saved yet. Add one below.",
                 M3Severity.Warning, FontAwesomeIcon.ExclamationTriangle);
@@ -818,7 +855,7 @@ public partial class MainWindow : Window, IDisposable
             {
                 StatusLine(FontAwesomeIcon.PencilAlt, "Unsaved changes.", s.Warning);
             }
-            else if (!string.IsNullOrEmpty(cfg.TomestoneApiKey))
+            else if (cfg.HasTomestoneKey())
             {
                 StatusLine(FontAwesomeIcon.CheckCircle, "API key saved.", s.Success);
             }
@@ -841,9 +878,6 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Appearance
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawAppearancePage()
     {
         var cfg = Configuration;
@@ -955,9 +989,6 @@ public partial class MainWindow : Window, IDisposable
             && MathF.Abs(a.Z - b.Z) < tolerance;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // About
-    // ─────────────────────────────────────────────────────────────────────────
     private void DrawAboutPage()
     {
         var s = M3.Scheme;
@@ -982,7 +1013,7 @@ public partial class MainWindow : Window, IDisposable
 
             ImGui.Dummy(new Vector2(0f, M3.Space2));
 
-            _ = M3Widgets.Pill("##about_version", $"v{version}", s.Primary, FontAwesomeIcon.CodeBranch);
+            _ = M3Widgets.Pill("##about_version", $"v{PassportCheckerReborn.Version}", s.Primary, FontAwesomeIcon.CodeBranch);
             ImGui.SameLine(0f, M3.Space1);
             _ = M3Widgets.Pill("##about_author", "The Combat Reborn Team - LTS", s.Tertiary, FontAwesomeIcon.Users);
 
@@ -1031,18 +1062,13 @@ public partial class MainWindow : Window, IDisposable
                     tooltip: "Clears the saved blacklist cache, then re-reads it from the game."))
             {
                 plugin.BlacklistCache.Clear();
-                plugin.PartyFinderManager.ForceRefreshBlacklist();
+                plugin.PartyFinderManager.RefreshBlacklist();
             }
 
             M3SettingRow.End(row);
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Row helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>A setting with a trailing switch. Returns true when the user flipped it.</summary>
     private static bool SwitchRow(string label, string? supporting, ref bool value, bool enabled = true)
     {
         var row = M3SettingRow.Begin(label, supporting, M3Widgets.SwitchSize(), disabled: !enabled);
@@ -1073,7 +1099,7 @@ public partial class MainWindow : Window, IDisposable
         return changed;
     }
 
-    /// <summary>Returns the index the user picked this frame, or -1 when the selection did not change.</summary>
+    // Returns the index picked this frame, or -1 when the selection did not change.
     private static int SegmentedRow(string label, string? supporting, string id, M3Segment[] segments, int selectedIndex)
     {
         var width = M3Widgets.SegmentedWidth(segments);
@@ -1132,13 +1158,11 @@ public partial class MainWindow : Window, IDisposable
         M3SettingRow.End(row);
     }
 
-    /// <summary>One numbered instruction in a setup guide.</summary>
     private static void StepRow(int number, string text)
     {
         TextRow($"{number}.  {text}", null);
     }
 
-    /// <summary>One numbered instruction with a trailing action button. Returns true when it was clicked.</summary>
     private static bool StepRow(int number, string text, string id, string action, FontAwesomeIcon icon, float? width = null)
     {
         var buttonWidth = width ?? M3Widgets.ButtonWidth(icon, action);
@@ -1149,7 +1173,6 @@ public partial class MainWindow : Window, IDisposable
         return pressed;
     }
 
-    /// <summary>A guide step whose button copies an example value, confirming briefly once it has.</summary>
     private void CopyStepRow(int number, string text, string id, string value)
     {
         var copied = copiedId == id && ImGui.GetTime() - copiedAt < CopiedFeedbackSeconds;
@@ -1165,14 +1188,12 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    /// <summary>Starts a line of buttons beneath setting rows, lined up with the rows' text.</summary>
     private static void BeginActionRow()
     {
         ImGui.Dummy(new Vector2(0f, M3.Space1));
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + RowInset);
     }
 
-    /// <summary>An icon and a wrapped line of text in one colour, lined up with the setting rows' text.</summary>
     private static void StatusLine(FontAwesomeIcon icon, string message, Vector4 color)
     {
         ImGui.Dummy(new Vector2(0f, M3.Space1));
@@ -1186,18 +1207,13 @@ public partial class MainWindow : Window, IDisposable
         ImGui.TextWrapped(message);
     }
 
-    private static bool HasFFLogsCredentials(Configuration cfg)
+    private static string WhenAvailable(string supporting, bool unavailable)
     {
-        return !string.IsNullOrEmpty(cfg.FFLogsClientId) && !string.IsNullOrEmpty(cfg.FFLogsClientSecret);
+        return unavailable ? Unavailable : supporting;
     }
 
     private static void OpenUrl(string url)
     {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return;
-        }
-
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

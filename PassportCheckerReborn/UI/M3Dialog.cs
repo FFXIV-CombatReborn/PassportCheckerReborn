@@ -4,7 +4,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>One button in an <see cref="M3Dialog"/>'s action row.</summary>
 internal readonly record struct M3DialogAction(
     string Label,
     M3ButtonStyle Style = M3ButtonStyle.Text,
@@ -62,7 +61,6 @@ internal static class M3Dialog
 
         using (ImRaii.PushFont(M3.HeadlineSmall))
         {
-            // With a hero icon the headline centres under it, as long as it fits on one line.
             var headlineWidth = ImGui.CalcTextSize(headline).X;
             if (centred && headlineWidth <= contentWidth)
             {

@@ -4,12 +4,8 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>
-/// A Material tonal palette. Material's reference implementation resolves tones in HCT; we resolve
-/// them in CIE L*C*h(ab) instead — tone maps onto L*, chroma is held as high as the sRGB gamut
-/// allows, hue is preserved. Close enough for UI surfaces, and it keeps the plugin free of a
-/// colour-science dependency.
-/// </summary>
+// Material resolves tones in HCT. This uses CIE L*C*h(ab) instead: close enough for UI surfaces, and
+// it needs no colour-science dependency.
 internal sealed class TonalPalette(float hue, float chroma)
 {
     private readonly Dictionary<int, Vector4> cache = [];
@@ -17,7 +13,7 @@ internal sealed class TonalPalette(float hue, float chroma)
     public float Hue { get; } = hue;
     public float Chroma { get; } = chroma;
 
-    /// <summary>The colour at the given tone (0 = black, 100 = white).</summary>
+    // Tone 0 is black, 100 is white.
     public Vector4 this[float tone]
     {
         get
@@ -35,7 +31,6 @@ internal sealed class TonalPalette(float hue, float chroma)
     }
 }
 
-/// <summary>The key palettes every role colour is derived from.</summary>
 internal sealed class CorePalette
 {
     private const float BaseErrorHue = 25f;
@@ -72,11 +67,8 @@ internal sealed class CorePalette
             error: new TonalPalette(ResolveErrorHue(hue), 84f));
     }
 
-    /// <summary>
-    /// Material pins the error palette to one hue, which breaks down when the brand colour is itself
-    /// red: accent and danger become indistinguishable. On a collision, rotate the error hue away
-    /// from the seed far enough to stay distinct while keeping it on the red side of the wheel.
-    /// </summary>
+    // Material pins the error palette to one hue, which a red seed would be indistinguishable from.
+    // On a collision the error hue is rotated away from the seed.
     private static float ResolveErrorHue(float seedHue)
     {
         var separation = MathF.Abs(M3ColorMath.WrapHue(BaseErrorHue - seedHue + 180f) - 180f);
@@ -86,7 +78,6 @@ internal sealed class CorePalette
     }
 }
 
-/// <summary>The Material 3 dark colour scheme, using the spec's dark-theme tone assignments.</summary>
 internal sealed class M3Scheme
 {
     private static readonly TonalPalette WarningPalette = new(75f, 80f);
@@ -138,9 +129,7 @@ internal sealed class M3Scheme
         Scrim = n[0];
         Shadow = n[0];
 
-        // Semantic accents deliberately do not come from the seed: "danger" must never turn out green
-        // because someone re-themed the window. Only the error palette may move, and only to stay
-        // distinguishable from a red-ish brand colour; see CorePalette.ResolveErrorHue.
+        // Semantic accents do not come from the seed: re-theming must never turn "danger" green.
         Warning = WarningPalette[80];
         WarningContainer = WarningPalette[30];
         Success = SuccessPalette[80];
@@ -153,8 +142,6 @@ internal sealed class M3Scheme
     public Vector4 PrimaryContainer { get; }
     public Vector4 OnPrimaryContainer { get; }
     public Vector4 PrimaryFixedDim { get; }
-
-    /// <summary>The accent for actions sitting on <see cref="InverseSurface"/>, such as a snackbar's.</summary>
     public Vector4 InversePrimary { get; }
 
     public Vector4 Secondary { get; }
@@ -198,7 +185,6 @@ internal sealed class M3Scheme
     }
 }
 
-/// <summary>sRGB / CIELAB conversions plus gamut mapping, used to resolve tonal palettes.</summary>
 internal static class M3ColorMath
 {
     private const float Epsilon = 216f / 24389f;
@@ -213,7 +199,7 @@ internal static class M3ColorMath
         return hue < 0f ? hue + 360f : hue;
     }
 
-    /// <summary>Unpacks an 0xRRGGBB literal into an opaque colour.</summary>
+    // From an 0xRRGGBB literal.
     public static Vector4 FromRgb(uint rgb)
     {
         return new Vector4(
@@ -249,10 +235,8 @@ internal static class M3ColorMath
         b = 200f * (fy - fz);
     }
 
-    /// <summary>
-    /// Resolves L*C*h to an sRGB colour, walking chroma down until the result fits the gamut, so
-    /// saturated hues degrade gracefully at very light and very dark tones instead of clipping.
-    /// </summary>
+    // Walks chroma down until the colour fits the sRGB gamut, so saturated hues fade rather than
+    // clip at very light and very dark tones.
     public static Vector4 FromLch(float lightness, float chroma, float hue)
     {
         if (chroma < 0.0001f)
@@ -292,7 +276,7 @@ internal static class M3ColorMath
         return FromLabRaw(lightness, a, b, out _);
     }
 
-    /// <summary>Mixes two colours in linear light, which keeps mid-points from going muddy.</summary>
+    // Mixed in linear light, which keeps mid-points from going muddy.
     public static Vector4 Mix(Vector4 from, Vector4 to, float amount)
     {
         amount = Math.Clamp(amount, 0f, 1f);

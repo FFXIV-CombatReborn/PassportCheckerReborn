@@ -3,7 +3,7 @@
   <PropertyGroup>
 	<Description>Alternative to PFFinder.</Description>
 	<Version>0.0.0.1</Version>
-	<PackageProjectUrl>https://github.com/goatcorp/SamplePlugin</PackageProjectUrl>
+	<PackageProjectUrl>https://github.com/FFXIV-CombatReborn/PassportCheckerReborn</PackageProjectUrl>
 	<PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
 	<IsPackable>false</IsPackable>
 	<TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
@@ -21,10 +21,6 @@
 	<NoWarn>1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ECommons" Version="3.2.1.21" />
-  </ItemGroup>
-
-  <ItemGroup>
 	<PackageReference Update="DalamudPackager" Version="15.0.0" />
 	<PackageReference Update="DotNet.ReproducibleBuilds" Version="2.0.5" />
   </ItemGroup>
@@ -32,7 +28,6 @@
   <ItemGroup>
     <Reference Include="Dalamud.Common">
 	<HintPath>$(DalamudLibPath)Dalamud.Common.dll</HintPath>
-	<!-- Do not copy this reference to output -->
 	<Private>False</Private>
     </Reference>
   </ItemGroup>
@@ -40,18 +35,16 @@
   <ItemGroup>
 	<Using Include="Dalamud.Interface" />
 	<Using Include="Dalamud.Bindings.ImGui" />
-	<Using Include="Newtonsoft.Json" />
   </ItemGroup>
 
-    <!-- Prune unwanted DLLs from output -->
+  <ItemGroup>
+	<EmbeddedResource Include="Resources\PCR_Icon.png" />
+  </ItemGroup>
+
+    <!-- Keep referenced DLLs out of the output: Dalamud provides everything the plugin uses. -->
     <Target Name="PruneOutputDlls" AfterTargets="ResolveReferences">
         <ItemGroup>
-            <!-- Keep only these DLLs in the copy-local list -->
-            <_KeepDlls Include="@(ReferenceCopyLocalPaths)" Condition="&#xD;&#xA;	'%(Filename)' == 'PassportCheckerReborn' or&#xD;&#xA;	'%(Filename)' == 'ECommons'&#xD;&#xA;" />
-            <!-- Remove everything else -->
-            <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="!('%(Filename)' == 'PassportCheckerReborn' or '%(Filename)' == 'ECommons')" />
-            <!-- Re-add only the kept set -->
-            <ReferenceCopyLocalPaths Include="@(_KeepDlls)" />
+            <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)' != 'PassportCheckerReborn'" />
         </ItemGroup>
     </Target>
 

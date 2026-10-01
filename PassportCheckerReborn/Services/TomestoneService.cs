@@ -1,528 +1,190 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Services;
 
-/// <summary>
-/// Provides integration with <see href="https://tomestone.gg"/>.
-///
-/// <para>
-/// Browser-based lookups open the player's profile in the system default browser.
-/// API-based lookups use the documented Tomestone public API to fetch prog data
-/// and activity data for a given duty.
-/// </para>
-/// </summary>
+// Prog points and clears from the Tomestone.gg API.
 public sealed partial class TomestoneService : IDisposable
 {
-    private readonly PassportCheckerReborn plugin;
-    private readonly HttpClient httpClient;
-
-    private const string BaseUrl = "https://tomestone.gg";
     private const string ApiBaseUrl = "https://tomestone.gg/api";
 
-    [GeneratedRegex(@"[^a-z0-9\s-]", RegexOptions.Compiled)]
-    private static partial Regex SlugStripRegex();
+    private static readonly string[] EncounterCategories = ["savage", "ultimate", "extremes", "criterion", "chaotic", "quantum"];
 
-    [GeneratedRegex(@"/lodestone/character/(\d+)/", RegexOptions.Compiled)]
-    private static partial Regex LodestoneIdRegex();
+    // English duty name to Tomestone's expansion, zone and encounter slugs, as TomestoneViewer has them.
+    private static readonly Dictionary<string, TomestoneEncounterParams> Encounters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Futures Rewritten (Ultimate)"] = new("dawntrail", "ultimates", "futures-rewritten-ultimate"),
+        ["Dancing Mad (Ultimate)"] = new("dawntrail", "ultimates", "dancing-mad-ultimate"),
+        ["The Omega Protocol (Ultimate)"] = new("endwalker", "ultimates", "the-omega-protocol-ultimate"),
+        ["Dragonsong's Reprise (Ultimate)"] = new("endwalker", "ultimates", "dragonsongs-reprise-ultimate"),
+        ["The Epic of Alexander (Ultimate)"] = new("shadowbringers", "ultimates", "the-epic-of-alexander-ultimate"),
+        ["The Weapon's Refrain (Ultimate)"] = new("stormblood", "ultimates", "the-weapons-refrain-ultimate"),
+        ["The Unending Coil of Bahamut (Ultimate)"] = new("stormblood", "ultimates", "the-unending-coil-of-bahamut-ultimate"),
 
-    /// <summary>
-    /// Maps PF duty names to Tomestone API query parameters
-    /// (expansion, zone, encounter) for the progression-graph and activity endpoints.
-    /// Values are sourced from the TomestoneViewer plugin's Location definitions.
-    /// </summary>
-    private static readonly Dictionary<string, TomestoneEncounterParams> DutyNameToTomestoneParams =
+        ["AAC Heavyweight M1 (Savage)"] = new("dawntrail", "aac-heavyweight-savage", "vamp-fatale"),
+        ["AAC Heavyweight M2 (Savage)"] = new("dawntrail", "aac-heavyweight-savage", "red-hot-deep-blue"),
+        ["AAC Heavyweight M3 (Savage)"] = new("dawntrail", "aac-heavyweight-savage", "the-tyrant"),
+        ["AAC Heavyweight M4 (Savage) P1"] = new("dawntrail", "aac-heavyweight-savage", "lindwurm"),
+        ["AAC Heavyweight M4 (Savage) P2"] = new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
+
+        ["AAC Light-heavyweight M1 (Savage)"] = new("dawntrail", "aac-light-heavyweight-savage", "black-cat"),
+        ["AAC Light-heavyweight M2 (Savage)"] = new("dawntrail", "aac-light-heavyweight-savage", "honey-b-lovely"),
+        ["AAC Light-heavyweight M3 (Savage)"] = new("dawntrail", "aac-light-heavyweight-savage", "brute-bomber"),
+        ["AAC Light-heavyweight M4 (Savage)"] = new("dawntrail", "aac-light-heavyweight-savage", "wicked-thunder"),
+
+        ["AAC Cruiserweight M1 (Savage)"] = new("dawntrail", "aac-cruiserweight-savage", "dancing-green"),
+        ["AAC Cruiserweight M2 (Savage)"] = new("dawntrail", "aac-cruiserweight-savage", "sugar-riot"),
+        ["AAC Cruiserweight M3 (Savage)"] = new("dawntrail", "aac-cruiserweight-savage", "brute-abombinator"),
+        ["AAC Cruiserweight M4 (Savage)"] = new("dawntrail", "aac-cruiserweight-savage", "howling-blade"),
+
+        ["Worqor Lar Dor (Extreme)"] = new("dawntrail", "trials-extreme", "valigarmanda"),
+        ["Everkeep (Extreme)"] = new("dawntrail", "trials-extreme", "everkept"),
+        ["The Minstrel's Ballad: Sphene's Burden"] = new("dawntrail", "trials-extreme", "queen-eternal"),
+        ["Recollection (Extreme)"] = new("dawntrail", "trials-extreme", "zelenia"),
+        ["The Minstrel's Ballad: Necron's Embrace"] = new("dawntrail", "trials-extreme", "necron"),
+        ["The Windward Wilds (Extreme)"] = new("dawntrail", "trials-extreme", "guardian-arkveld"),
+        ["Hell on Rails (Extreme)"] = new("dawntrail", "trials-extreme", "doomtrain"),
+        ["The Unmaking (Extreme)"] = new("dawntrail", "trials-extreme", "enuo"),
+
+        ["Tsukuyomi's Pain (Unreal)"] = new("dawntrail", "unreal", "tsukuyomis-pain"),
+        ["Shinryu's Domain (Unreal)"] = new("dawntrail", "unreal", "shinryu"),
+
+        ["The Cloud of Darkness (Chaotic)"] = new("dawntrail", "chaotic", "the-cloud-of-darkness"),
+    };
+
+    // Duties the Party Finder lists once but Tomestone splits in two. The last part stands for the
+    // full clear, so it is asked for first; the other is the fallback when it has no data.
+    private static readonly Dictionary<string, (TomestoneEncounterParams Preferred, TomestoneEncounterParams Fallback)> MultiPartEncounters =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            // ── Dawntrail Ultimates ──────────────────────────────────────────────
-            ["Futures Rewritten (Ultimate)"] =
-                new("dawntrail", "ultimates", "futures-rewritten-ultimate"),
-            ["Dancing Mad (Ultimate)"] =
-                new("dawntrail", "ultimates", "dancing-mad-ultimate"),
-
-            // ── Endwalker Ultimates ──────────────────────────────────────────────
-            ["The Omega Protocol (Ultimate)"] =
-                new("endwalker", "ultimates", "the-omega-protocol-ultimate"),
-            ["Dragonsong's Reprise (Ultimate)"] =
-                new("endwalker", "ultimates", "dragonsongs-reprise-ultimate"),
-
-            // ── Shadowbringers Ultimates ─────────────────────────────────────────
-            ["The Epic of Alexander (Ultimate)"] =
-                new("shadowbringers", "ultimates", "the-epic-of-alexander-ultimate"),
-
-            // ── Stormblood Ultimates ─────────────────────────────────────────────
-            ["The Weapon's Refrain (Ultimate)"] =
-                new("stormblood", "ultimates", "the-weapons-refrain-ultimate"),
-            ["The Unending Coil of Bahamut (Ultimate)"] =
-                new("stormblood", "ultimates", "the-unending-coil-of-bahamut-ultimate"),
-
-            // ── Dawntrail Savage – AAC Heavyweight ───────────────────────────────
-            ["AAC Heavyweight M1 (Savage)"] =
-                new("dawntrail", "aac-heavyweight-savage", "vamp-fatale"),
-            ["AAC Heavyweight M2 (Savage)"] =
-                new("dawntrail", "aac-heavyweight-savage", "red-hot-deep-blue"),
-            ["AAC Heavyweight M3 (Savage)"] =
-                new("dawntrail", "aac-heavyweight-savage", "the-tyrant"),
-            ["AAC Heavyweight M4 (Savage) P1"] =
-                new("dawntrail", "aac-heavyweight-savage", "lindwurm"),
-            ["AAC Heavyweight M4 (Savage) P2"] =
+            ["AAC Heavyweight M4 (Savage)"] = (
                 new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
-
-            // ── Dawntrail Savage – AAC Light-heavyweight ─────────────────────────
-            ["AAC Light-heavyweight M1 (Savage)"] =
-                new("dawntrail", "aac-light-heavyweight-savage", "black-cat"),
-            ["AAC Light-heavyweight M2 (Savage)"] =
-                new("dawntrail", "aac-light-heavyweight-savage", "honey-b-lovely"),
-            ["AAC Light-heavyweight M3 (Savage)"] =
-                new("dawntrail", "aac-light-heavyweight-savage", "brute-bomber"),
-            ["AAC Light-heavyweight M4 (Savage)"] =
-                new("dawntrail", "aac-light-heavyweight-savage", "wicked-thunder"),
-
-            // ── Dawntrail Savage – AAC Cruiserweight ─────────────────────────────
-            ["AAC Cruiserweight M1 (Savage)"] =
-                new("dawntrail", "aac-cruiserweight-savage", "dancing-green"),
-            ["AAC Cruiserweight M2 (Savage)"] =
-                new("dawntrail", "aac-cruiserweight-savage", "honey-b-lovely"),
-            ["AAC Cruiserweight M3 (Savage)"] =
-                new("dawntrail", "aac-cruiserweight-savage", "brute-bomber"),
-            ["AAC Cruiserweight M4 (Savage)"] =
-                new("dawntrail", "aac-cruiserweight-savage", "wicked-thunder"),
-
-            // ── Dawntrail Extreme Trials ──────────────────────────────────────────
-            ["Worqor Lar Dor (Extreme)"] =
-                new("dawntrail", "trials-extreme", "valigarmanda"),
-            ["Everkeep (Extreme)"] =
-                new("dawntrail", "trials-extreme", "everkept"),
-            ["The Minstrel's Ballad: Sphene's Burden"] =
-                new("dawntrail", "trials-extreme", "queen-eternal"),
-            ["Recollection (Extreme)"] =
-                new("dawntrail", "trials-extreme", "zelenia"),
-            ["The Minstrel's Ballad: Necron's Embrace"] =
-                new("dawntrail", "trials-extreme", "necron"),
-            ["The Windward Wilds (Extreme)"] =
-                new("dawntrail", "trials-extreme", "guardian-arkveld"),
-            ["Hell on Rails (Extreme)"] =
-                new("dawntrail", "trials-extreme", "doomtrain"),
-            ["The Unmaking (Extreme)"] =
-                new("dawntrail", "trials-extreme", "enuo"),
-
-            // ── Dawntrail Unreal ──────────────────────────────────────────────────
-            ["Tsukuyomi's Pain (Unreal)"] =
-                new("dawntrail", "unreal", "tsukuyomis-pain"),
-            ["Shinryu's Domain (Unreal)"] =
-                new("dawntrail", "unreal", "shinryu"),
-
-            // ── Dawntrail Chaotic ─────────────────────────────────────────────────
-            ["The Cloud of Darkness (Chaotic)"] =
-                new("dawntrail", "chaotic", "the-cloud-of-darkness"),
+                new("dawntrail", "aac-heavyweight-savage", "lindwurm")),
         };
 
-    /// <summary>
-    /// Maps base duty names for multi-part encounters to their preferred
-    /// Tomestone encounter parameters.  These are used for auto-detection
-    /// (e.g. when PF reports "AAC Heavyweight M4 (Savage)") but do NOT
-    /// appear in the duty dropdown – only the per-phase entries above are shown.
-    /// For multi-phase fights the preferred phase is P2, which represents the
-    /// full clear.
-    /// </summary>
-    private static readonly Dictionary<string, TomestoneEncounterParams> MultiPartDutyToTomestoneParams =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["AAC Heavyweight M4 (Savage)"] =
-            new("dawntrail", "aac-heavyweight-savage", "lindwurm-ii"),
-        };
-
-    /// <summary>
-    /// Fallback encounter parameters for multi-part duties.  When the preferred
-    /// phase (P2) returns no data the lookup retries with these P1 params.
-    /// </summary>
-    private static readonly Dictionary<string, TomestoneEncounterParams> MultiPartDutyFallbackParams =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["AAC Heavyweight M4 (Savage)"] =
-            new("dawntrail", "aac-heavyweight-savage", "lindwurm"),
-        };
-
-    /// <summary>
-    /// Returns all duty names that have Tomestone encounter mappings.
-    /// Multi-part base names (e.g. "AAC Heavyweight M4 (Savage)") are excluded
-    /// because the per-phase entries (P1 / P2) are already present.
-    /// </summary>
-    public static IReadOnlyCollection<string> GetAllSupportedDutyNames()
-        => DutyNameToTomestoneParams.Keys;
+    private readonly PassportCheckerReborn plugin;
+    private readonly HttpClient httpClient;
 
     public TomestoneService(PassportCheckerReborn plugin)
     {
         this.plugin = plugin;
         httpClient = new HttpClient();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"PassportCheckerReborn/{PassportCheckerReborn.Version}");
-        httpClient.DefaultRequestHeaders.Accept.Add(
-            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Browser-based lookup (always available)
-    // ─────────────────────────────────────────────────────────────────────────
+    // The phase entries of a multi-part duty are listed; its combined name is not.
+    public static IEnumerable<string> SupportedDutyNames => Encounters.Keys;
 
-    /// <summary>
-    /// Opens the player's Tomestone.gg profile in the system default browser.
-    /// </summary>
-    public static void OpenTomestonePage(string playerName, string world, string? characterId = null)
-    {
-        var slug = BuildTomestoneSlug(playerName);
-        var url = !string.IsNullOrWhiteSpace(characterId)
-            ? $"{BaseUrl}/character/{characterId}/{slug}"
-            : $"{BaseUrl}/character/{Uri.EscapeDataString(world)}/{slug}";
-
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            PassportCheckerReborn.Log.Information($"[TomestoneService] Opened {url}");
-        }
-        catch (Exception ex)
-        {
-            PassportCheckerReborn.Log.Warning(ex, $"[TomestoneService] Failed to open browser for {url}");
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Public API – Encounter-specific lookup
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Fetches Tomestone data for a player for a specific duty.
-    /// Uses the profile-by-ID endpoint to get parse and prog information
-    /// for all encounters in a single call.  Falls back to the legacy
-    /// progression-graph and activity endpoints when the profile-by-ID
-    /// response is unavailable.
-    /// </summary>
-    public async Task<TomestoneCharacterInfo?> GetCharacterInfoAsync(
-        string playerName, string world, string? dutyName = null)
-    {
-        if (string.IsNullOrWhiteSpace(playerName) || string.IsNullOrWhiteSpace(world))
-        {
-            return null;
-        }
-
-        var info = new TomestoneCharacterInfo
-        {
-            Name = playerName,
-            World = world,
-        };
-
-        // Resolve Tomestone encounter parameters for the duty
-        TomestoneEncounterParams? encounterParams = null;
-        TomestoneEncounterParams? fallbackEncounterParams = null;
-        if (!string.IsNullOrWhiteSpace(dutyName))
-        {
-            if (!DutyNameToTomestoneParams.TryGetValue(dutyName, out encounterParams))
-            {
-                MultiPartDutyToTomestoneParams.TryGetValue(dutyName, out encounterParams);
-                MultiPartDutyFallbackParams.TryGetValue(dutyName, out fallbackEncounterParams);
-            }
-        }
-
-        var server = Uri.EscapeDataString(world);
-        var name = Uri.EscapeDataString(playerName);
-
-        // ── Profile (Lodestone ID for browser links) ─────────────────────────
-        await FetchProfileAsync(info, server, name);
-
-        // ── Full profile by Lodestone ID (parse + prog for all encounters) ───
-        if (!string.IsNullOrWhiteSpace(info.CharacterId))
-        {
-            await FetchFullProfileByIdAsync(info, info.CharacterId, dutyName, encounterParams);
-        }
-
-        // ── Fallback to old endpoints if profile-by-ID didn't yield data ─────
-        if (encounterParams != null && info.ProgPoint == null && !info.TotalClears.HasValue)
-        {
-            await FetchProgressionGraphAsync(info, server, name, encounterParams);
-            await FetchActivityAsync(info, server, name, encounterParams);
-        }
-        else if (!string.IsNullOrWhiteSpace(dutyName) && encounterParams == null)
-        {
-        }
-
-        // ── P1 fallback for multi-part encounters (e.g. M4S P2 had no data) ─
-        if (fallbackEncounterParams != null && info.ProgPoint == null && !info.TotalClears.HasValue)
-        {
-            if (!string.IsNullOrWhiteSpace(info.CharacterId))
-            {
-                await FetchFullProfileByIdAsync(info, info.CharacterId, dutyName, fallbackEncounterParams);
-            }
-
-            if (info.ProgPoint == null && !info.TotalClears.HasValue)
-            {
-                await FetchProgressionGraphAsync(info, server, name, fallbackEncounterParams);
-                await FetchActivityAsync(info, server, name, fallbackEncounterParams);
-            }
-        }
-
-        return info;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Lodestone ID resolution (fallback)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Searches the FFXIV Lodestone for a character by name and world and
-    /// returns the Lodestone character ID, or <c>null</c> if not found.
-    /// </summary>
-    public async Task<string?> ResolveLodestoneIdAsync(string playerName, string world)
-    {
-        if (string.IsNullOrWhiteSpace(playerName) || string.IsNullOrWhiteSpace(world))
-        {
-            return null;
-        }
-
-        try
-        {
-            var encodedName = Uri.EscapeDataString(playerName);
-            var encodedWorld = Uri.EscapeDataString(world);
-            var url = $"https://na.finalfantasyxiv.com/lodestone/character/?q={encodedName}&worldname={encodedWorld}";
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.UserAgent.ParseAdd($"PassportCheckerReborn/{PassportCheckerReborn.Version}");
-
-            using var response = await httpClient.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            var html = await response.Content.ReadAsStringAsync();
-
-            var match = LodestoneIdRegex().Match(html);
-            if (match.Success)
-            {
-                var lodestoneId = match.Groups[1].Value;
-                PassportCheckerReborn.Log.Information(
-                    $"[TomestoneService] Resolved Lodestone ID {lodestoneId} for {playerName}@{world}");
-                return lodestoneId;
-            }
-
-            return null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Returns the Tomestone encounter parameters for a given duty name,
-    /// or <c>null</c> if the duty is not mapped.
-    /// </summary>
-    public static TomestoneEncounterParams? GetEncounterParamsForDuty(string? dutyName)
-    {
-        if (string.IsNullOrWhiteSpace(dutyName))
-        {
-            return null;
-        }
-
-        if (DutyNameToTomestoneParams.TryGetValue(dutyName, out var p))
-        {
-            return p;
-        }
-
-        MultiPartDutyToTomestoneParams.TryGetValue(dutyName, out p);
-        return p;
-    }
+    [GeneratedRegex(@"[^a-z0-9\s-]")]
+    private static partial Regex SlugStripRegex();
 
     public void Dispose()
     {
         httpClient.Dispose();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private – API calls
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Fetches the progression graph for a character/encounter from
-    /// <c>GET /api/character/progression-graph/{server}/{name}?expansion=…&amp;zone=…&amp;encounter=…</c>
-    /// and populates <see cref="TomestoneCharacterInfo.ProgPoint"/>.
-    /// </summary>
-    private async Task FetchProgressionGraphAsync(
-        TomestoneCharacterInfo info, string server, string name,
-        TomestoneEncounterParams ep)
+    public async Task<TomestoneCharacterInfo?> GetCharacterInfoAsync(string playerName, string world, string? dutyName = null)
     {
-        try
+        if (string.IsNullOrWhiteSpace(playerName) || string.IsNullOrWhiteSpace(world))
         {
-            var url = $"{ApiBaseUrl}/character/progression-graph/{server}/{name}"
-                + $"?expansion={Uri.EscapeDataString(ep.Expansion)}"
-                + $"&zone={Uri.EscapeDataString(ep.Zone)}"
-                + $"&encounter={Uri.EscapeDataString(ep.Encounter)}";
-
-            using var request = CreateAuthenticatedRequest(url);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
-            using var response = await httpClient.SendAsync(request);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] progression-graph status: {(int)response.StatusCode} {response.StatusCode}");
-            if (!response.IsSuccessStatusCode)
-            {
-                return;
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] progression-graph response: {json}");
-
-            // Check if the response is an empty array "[]" which indicates a hidden profile
-            if (json.Trim() == "[]")
-            {
-                info.NoLogs = true;
-                return;
-            }
-
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Try to extract the furthest prog point from the graph data.
-            // The response contains a "data.graph" array of {duration, mechanic:{name,number}}.
-            info.ProgPoint = ParseProgPointFromGraph(root);
+            return null;
         }
-        catch (Exception)
+
+        TomestoneEncounterParams? encounter = null;
+        TomestoneEncounterParams? fallback = null;
+        if (!string.IsNullOrWhiteSpace(dutyName)
+            && !Encounters.TryGetValue(dutyName, out encounter)
+            && MultiPartEncounters.TryGetValue(dutyName, out var parts))
         {
+            encounter = parts.Preferred;
+            fallback = parts.Fallback;
         }
+
+        var info = new TomestoneCharacterInfo();
+        var server = Uri.EscapeDataString(world);
+        var name = Uri.EscapeDataString(playerName);
+
+        await FetchAsync(info, $"{ApiBaseUrl}/character/profile/{server}/{name}", root =>
+        {
+            if (root.TryGetProperty("lodestoneId", out var id)
+                || root.TryGetProperty("lodestone_id", out id)
+                || root.TryGetProperty("id", out id))
+            {
+                info.CharacterId = id.ValueKind == JsonValueKind.Number ? id.GetInt64().ToString() : id.GetString();
+            }
+        });
+
+        await FetchEncounterAsync(info, server, name, dutyName, encounter);
+        if (fallback != null && !HasEncounterData(info))
+        {
+            await FetchEncounterAsync(info, server, name, dutyName, fallback);
+        }
+
+        return info;
     }
 
-    /// <summary>
-    /// Fetches activity data for a character/encounter from
-    /// <c>GET /api/character/activity/{server}/{name}?expansion=…&amp;zone=…&amp;encounter=…</c>
-    /// and populates clears / best parse info.
-    /// </summary>
-    private async Task FetchActivityAsync(
-        TomestoneCharacterInfo info, string server, string name,
-        TomestoneEncounterParams ep)
+    private static bool HasEncounterData(TomestoneCharacterInfo info)
     {
-        try
-        {
-            var url = $"{ApiBaseUrl}/character/activity/{server}/{name}"
-                + $"?expansion={Uri.EscapeDataString(ep.Expansion)}"
-                + $"&zone={Uri.EscapeDataString(ep.Zone)}"
-                + $"&encounter={Uri.EscapeDataString(ep.Encounter)}";
-
-            using var request = CreateAuthenticatedRequest(url);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
-            using var response = await httpClient.SendAsync(request);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] activity status: {(int)response.StatusCode} {response.StatusCode}");
-            if (!response.IsSuccessStatusCode)
-            {
-                return;
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] activity response: {json}");
-
-            // Check if the response is an empty array "[]" which indicates a hidden profile
-            if (json.Trim() == "[]")
-            {
-                info.NoLogs = true;
-                return;
-            }
-
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            ParseActivityResponse(info, root);
-        }
-        catch (Exception)
-        {
-        }
+        return info.ProgPoint != null || info.TotalClears.HasValue;
     }
 
-    /// <summary>
-    /// Fetches the character profile from
-    /// <c>GET /api/character/profile/{server}/{name}</c>
-    /// and populates the Lodestone character ID.
-    /// </summary>
-    private async Task FetchProfileAsync(
-        TomestoneCharacterInfo info, string server, string name)
+    // The profile by Lodestone ID covers every encounter in one call. The per-encounter endpoints are
+    // older, and only asked when it came back without the duty.
+    private async Task FetchEncounterAsync(
+        TomestoneCharacterInfo info, string server, string name, string? dutyName, TomestoneEncounterParams? encounter)
     {
-        try
-        {
-            var url = $"{ApiBaseUrl}/character/profile/{server}/{name}";
-
-            using var request = CreateAuthenticatedRequest(url);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
-            using var response = await httpClient.SendAsync(request);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] profile status: {(int)response.StatusCode} {response.StatusCode}");
-            if (!response.IsSuccessStatusCode)
-            {
-                return;
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] profile response: {json}");
-
-            // Check if the response is an empty array "[]" which indicates a hidden profile
-            if (json.Trim() == "[]")
-            {
-                info.NoLogs = true;
-                return;
-            }
-
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Extract Lodestone ID from various possible field names
-            if (root.TryGetProperty("lodestoneId", out var idEl))
-            {
-                info.CharacterId = ReadIdValue(idEl);
-            }
-            else if (root.TryGetProperty("lodestone_id", out var idEl2))
-            {
-                info.CharacterId = ReadIdValue(idEl2);
-            }
-            else if (root.TryGetProperty("id", out var idEl3))
-            {
-                info.CharacterId = ReadIdValue(idEl3);
-            }
-        }
-        catch (Exception)
-        {
-        }
-    }
-
-    /// <summary>
-    /// Fetches the full character profile from
-    /// <c>GET /api/character/profile/{lodestoneId}?update=true</c>
-    /// and parses encounter-specific data (clears and progression) for the
-    /// requested duty.
-    /// </summary>
-    private async Task FetchFullProfileByIdAsync(
-        TomestoneCharacterInfo info, string lodestoneId,
-        string? dutyName, TomestoneEncounterParams? encounterParams)
-    {
-        if (string.IsNullOrWhiteSpace(dutyName) && encounterParams == null)
+        if (encounter == null && string.IsNullOrWhiteSpace(dutyName))
         {
             return;
         }
 
+        if (!string.IsNullOrWhiteSpace(info.CharacterId))
+        {
+            await FetchAsync(info, $"{ApiBaseUrl}/character/profile/{info.CharacterId}?update=false",
+                root => ParseProfileEncounters(info, root, dutyName, encounter));
+        }
+
+        if (encounter == null || HasEncounterData(info))
+        {
+            return;
+        }
+
+        var query = $"{server}/{name}"
+            + $"?expansion={Uri.EscapeDataString(encounter.Expansion)}"
+            + $"&zone={Uri.EscapeDataString(encounter.Zone)}"
+            + $"&encounter={Uri.EscapeDataString(encounter.Encounter)}";
+
+        await FetchAsync(info, $"{ApiBaseUrl}/character/progression-graph/{query}", root => info.ProgPoint = ParseProgPointFromGraph(root));
+        await FetchAsync(info, $"{ApiBaseUrl}/character/activity/{query}", root => ParseActivityResponse(info, root));
+    }
+
+    // Requests a URL and hands the JSON to parse. A failed request or a parse error leaves info as it was.
+    private async Task FetchAsync(TomestoneCharacterInfo info, string url, Action<JsonElement> parse)
+    {
         try
         {
-            var url = $"{ApiBaseUrl}/character/profile/{lodestoneId}?update=false";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            var apiKey = plugin.Configuration.TomestoneApiKey;
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            }
 
-            using var request = CreateAuthenticatedRequest(url);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] GET {url}");
             using var response = await httpClient.SendAsync(request);
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile status: {(int)response.StatusCode} {response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 return;
             }
 
+            // A hidden profile is answered with an empty array.
             var json = await response.Content.ReadAsStringAsync();
-            //PassportCheckerReborn.Log.Debug($"[TomestoneService] full-profile response: {json}");
-
-            // Check if the response is an empty array "[]" which indicates a hidden profile
             if (json.Trim() == "[]")
             {
                 info.NoLogs = true;
@@ -530,156 +192,129 @@ public sealed partial class TomestoneService : IDisposable
             }
 
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            ParseProfileEncounters(info, root, dutyName, encounterParams);
+            parse(doc.RootElement);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            PassportCheckerReborn.Log.Debug(ex, $"[TomestoneService] Request failed: {url}");
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private – Response parsing
-    // ─────────────────────────────────────────────────────────────────────────
+    #region Response parsing
 
-    /// <summary>
-    /// Parses the progression-graph response to find the furthest mechanic reached.
-    /// The response is expected to contain a graph array with duration and mechanic info.
-    /// </summary>
+    // The furthest mechanic reached, from a graph of { duration, mechanic: { name, number } } points.
     private static string? ParseProgPointFromGraph(JsonElement root)
     {
-        // Try nested "data.graph" path (TomestoneViewer pattern)
-        if (root.TryGetProperty("data", out var dataEl) &&
-            dataEl.TryGetProperty("graph", out var graph))
-        {
-            // found
-        }
-        // Try top-level "graph" array
-        else if (root.TryGetProperty("graph", out graph))
-        {
-            // found
-        }
-        else
-        {
-            // Not a graph structure – try direct percentage fields
-            return ParseDirectProgPoint(root);
-        }
-
-        if (graph.ValueKind != JsonValueKind.Array)
+        if (!((root.TryGetProperty("data", out var data) && data.TryGetProperty("graph", out var graph))
+              || root.TryGetProperty("graph", out graph))
+            || graph.ValueKind != JsonValueKind.Array)
         {
             return ParseDirectProgPoint(root);
         }
 
-        // Find the entry with the highest duration → the furthest mechanic reached
-        var bestDuration = 0;
-        string? lastMechanic = null;
-
+        var longest = 0;
+        string? mechanic = null;
         foreach (var point in graph.EnumerateArray())
         {
-            if (!point.TryGetProperty("duration", out var durEl))
+            if (!point.TryGetProperty("duration", out var durationEl))
             {
                 continue;
             }
 
-            var dur = durEl.GetInt32();
-            if (dur <= bestDuration)
+            var duration = durationEl.GetInt32();
+            if (duration <= longest)
             {
                 continue;
             }
 
-            bestDuration = dur;
-
-            if (point.TryGetProperty("mechanic", out var mechEl))
+            longest = duration;
+            if (point.TryGetProperty("mechanic", out var mechanicEl))
             {
-                var mechName = mechEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
-                var mechNum = mechEl.TryGetProperty("number", out var numEl) && numEl.TryGetInt32(out var num) ? num : 0;
-                if (!string.IsNullOrWhiteSpace(mechName))
-                {
-                    lastMechanic = mechNum > 1 ? $"{mechName} #{mechNum}" : mechName;
-                }
+                mechanic = FormatMechanic(mechanicEl) ?? mechanic;
             }
         }
 
-        return lastMechanic;
+        return mechanic;
     }
 
-    /// <summary>
-    /// Tries to extract a prog point from direct percentage / phase fields.
-    /// </summary>
     private static string? ParseDirectProgPoint(JsonElement root)
     {
-        // Try "percent" or "bestPercent" as a direct value
-        if (root.TryGetProperty("percent", out var pctEl))
+        if (root.TryGetProperty("percent", out var percent) || root.TryGetProperty("bestPercent", out percent))
         {
-            return pctEl.ToString();
+            return percent.ToString();
         }
 
-        if (root.TryGetProperty("bestPercent", out var bestPctEl))
+        if (root.TryGetProperty("progPoint", out var progPoint) || root.TryGetProperty("prog_point", out progPoint))
         {
-            return bestPctEl.ToString();
-        }
-
-        if (root.TryGetProperty("progPoint", out var progEl))
-        {
-            return progEl.GetString();
-        }
-
-        if (root.TryGetProperty("prog_point", out var prog2El))
-        {
-            return prog2El.GetString();
+            return progPoint.GetString();
         }
 
         return null;
     }
 
-    /// <summary>
-    /// Parses the activity response to extract clears and best parse data.
-    /// </summary>
+    // "Splattershed", or "Splattershed #2" for a mechanic that comes round more than once.
+    private static string? FormatMechanic(JsonElement mechanic)
+    {
+        if (mechanic.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var name = mechanic.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        var number = mechanic.TryGetProperty("number", out var numberEl) && numberEl.TryGetInt32(out var value) ? value : 0;
+        return number > 1 ? $"{name} #{number}" : name;
+    }
+
+    // The activity endpoint has answered in several shapes; each is tried in turn.
     private static void ParseActivityResponse(TomestoneCharacterInfo info, JsonElement root)
     {
-        // Try various JSON structures the activity endpoint may return
-
-        // ── Paginated results pattern: { results: [...], hasNextPage: bool } ──
-        if (root.TryGetProperty("results", out var resultsEl) &&
-            resultsEl.ValueKind == JsonValueKind.Array)
-        {
-            ParseActivityArray(info, resultsEl);
-            return;
-        }
-
-        // ── Nested data pattern: data.paginator.data or activities.paginator.data ──
-        if (root.TryGetProperty("data", out var dataEl))
-        {
-            if (dataEl.TryGetProperty("paginator", out var pagEl) &&
-                pagEl.TryGetProperty("data", out var pagDataEl) &&
-                pagDataEl.ValueKind == JsonValueKind.Array)
-            {
-                ParseActivityArray(info, pagDataEl);
-                return;
-            }
-
-            if (dataEl.ValueKind == JsonValueKind.Array)
-            {
-                ParseActivityArray(info, dataEl);
-                return;
-            }
-        }
-
-        // ── Flat array at root ──
         if (root.ValueKind == JsonValueKind.Array)
         {
             ParseActivityArray(info, root);
             return;
         }
 
-        // ── Single-object response (might contain summary fields) ──
-        ParseActivitySummary(info, root);
+        if (root.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
+        {
+            ParseActivityArray(info, results);
+            return;
+        }
+
+        if (root.TryGetProperty("data", out var data))
+        {
+            if (data.ValueKind == JsonValueKind.Array)
+            {
+                ParseActivityArray(info, data);
+                return;
+            }
+
+            if (data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("paginator", out var paginator)
+                && paginator.TryGetProperty("data", out var page)
+                && page.ValueKind == JsonValueKind.Array)
+            {
+                ParseActivityArray(info, page);
+                return;
+            }
+        }
+
+        if ((root.TryGetProperty("clears", out var clears) || root.TryGetProperty("killsCount", out clears))
+            && clears.TryGetInt32(out var count))
+        {
+            info.TotalClears = count;
+        }
+
+        if (root.TryGetProperty("bestPercent", out var best) && best.TryGetDouble(out var bestPercent))
+        {
+            info.BestPercent = bestPercent;
+        }
     }
 
-    /// <summary>
-    /// Walks an array of activity entries looking for clears and best percent.
-    /// </summary>
     private static void ParseActivityArray(TomestoneCharacterInfo info, JsonElement array)
     {
         var totalKills = 0;
@@ -687,38 +322,18 @@ public sealed partial class TomestoneService : IDisposable
 
         foreach (var entry in array.EnumerateArray())
         {
-            // The entry might have the fields directly, or under an "activity" sub-object
-            var activity = entry.TryGetProperty("activity", out var actEl) ? actEl : entry;
+            var activity = entry.TryGetProperty("activity", out var nested) ? nested : entry;
 
-            // Check for kills
-            if (activity.TryGetProperty("killsCount", out var killsEl) &&
-                killsEl.TryGetInt32(out var kills) && kills > 0)
+            if (activity.TryGetProperty("killsCount", out var killsEl) && killsEl.TryGetInt32(out var kills) && kills > 0)
             {
                 totalKills += kills;
             }
 
-            // Check for best percent
-            if (activity.TryGetProperty("bestPercent", out var bpEl))
+            if (activity.TryGetProperty("bestPercent", out var bestEl)
+                && ReadPercent(bestEl) is { } percent
+                && (bestPercent is null || percent > bestPercent))
             {
-                if (bpEl.TryGetDouble(out var pct))
-                {
-                    if (!bestPercent.HasValue || pct > bestPercent.Value)
-                    {
-                        bestPercent = pct;
-                    }
-                }
-                else if (bpEl.ValueKind == JsonValueKind.String)
-                {
-                    var raw = bpEl.GetString();
-                    if (raw != null && double.TryParse(raw.TrimEnd('%'),
-                        NumberStyles.Float, CultureInfo.InvariantCulture, out var pctFromStr))
-                    {
-                        if (!bestPercent.HasValue || pctFromStr > bestPercent.Value)
-                        {
-                            bestPercent = pctFromStr;
-                        }
-                    }
-                }
+                bestPercent = percent;
             }
         }
 
@@ -729,84 +344,61 @@ public sealed partial class TomestoneService : IDisposable
 
         if (bestPercent.HasValue)
         {
-            info.BestPercent = bestPercent.Value;
+            info.BestPercent = bestPercent;
         }
     }
 
-    /// <summary>
-    /// Parses a single summary object for aggregate activity data.
-    /// </summary>
-    private static void ParseActivitySummary(TomestoneCharacterInfo info, JsonElement root)
+    // A number, or a string such as "57%".
+    private static double? ReadPercent(JsonElement element)
     {
-        if (root.TryGetProperty("clears", out var clearsEl) &&
-            clearsEl.TryGetInt32(out var clears))
+        return element.ValueKind switch
         {
-            info.TotalClears = clears;
-        }
-        else if (root.TryGetProperty("killsCount", out var kEl) &&
-                 kEl.TryGetInt32(out var k))
-        {
-            info.TotalClears = k;
-        }
-
-        if (root.TryGetProperty("bestPercent", out var bpEl) &&
-            bpEl.TryGetDouble(out var bp))
-        {
-            info.BestPercent = bp;
-        }
+            JsonValueKind.Number => element.GetDouble(),
+            JsonValueKind.String when double.TryParse(element.GetString()?.TrimEnd('%'),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null,
+        };
     }
 
-    /// <summary>
-    /// Parses encounter data from the full profile response
-    /// (<c>/api/character/profile/{id}?update=true</c>).
-    /// Searches through all encounter categories (savage, ultimate, extremes, etc.)
-    /// to find the requested duty and extract clear/progression data.
-    /// </summary>
+    // Savage and ultimate categories group their encounters; the others list them flat.
     private static void ParseProfileEncounters(
-        TomestoneCharacterInfo info, JsonElement root,
-        string? dutyName, TomestoneEncounterParams? encounterParams)
+        TomestoneCharacterInfo info, JsonElement root, string? dutyName, TomestoneEncounterParams? encounter)
     {
-        if (!root.TryGetProperty("encounters", out var encountersEl) ||
-            encountersEl.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetProperty("encounters", out var encounters) || encounters.ValueKind != JsonValueKind.Object)
         {
             return;
         }
 
-        // Encounter categories that may contain grouped or flat encounters
-        foreach (var category in new[] { "savage", "ultimate", "extremes", "criterion", "chaotic", "quantum" })
+        foreach (var category in EncounterCategories)
         {
-            if (!encountersEl.TryGetProperty(category, out var catEl) ||
-                catEl.ValueKind != JsonValueKind.Array)
+            if (!encounters.TryGetProperty(category, out var groups) || groups.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
-            foreach (var group in catEl.EnumerateArray())
+            foreach (var group in groups.EnumerateArray())
             {
                 if (group.ValueKind != JsonValueKind.Object)
                 {
                     continue;
                 }
 
-                // Savage / ultimate groups have a nested "encounters" array
-                if (group.TryGetProperty("encounters", out var subEncounters) &&
-                    subEncounters.ValueKind == JsonValueKind.Array)
+                if (!group.TryGetProperty("encounters", out var nested) || nested.ValueKind != JsonValueKind.Array)
                 {
-                    foreach (var enc in subEncounters.EnumerateArray())
-                    {
-                        if (MatchesEncounter(enc, dutyName, encounterParams))
-                        {
-                            ExtractEncounterData(info, enc);
-                            return;
-                        }
-                    }
-                }
-                else
-                {
-                    // Flat structure (extremes, criterion, etc.)
-                    if (MatchesEncounter(group, dutyName, encounterParams))
+                    if (MatchesEncounter(group, dutyName, encounter))
                     {
                         ExtractEncounterData(info, group);
+                        return;
+                    }
+
+                    continue;
+                }
+
+                foreach (var candidate in nested.EnumerateArray())
+                {
+                    if (MatchesEncounter(candidate, dutyName, encounter))
+                    {
+                        ExtractEncounterData(info, candidate);
                         return;
                     }
                 }
@@ -814,205 +406,77 @@ public sealed partial class TomestoneService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Determines whether the given JSON encounter element matches the
-    /// requested duty by <paramref name="encounterParams"/> (preferred) or
-    /// <paramref name="dutyName"/> (fallback).
-    /// When <paramref name="encounterParams"/> is provided the slug-based match
-    /// is used exclusively so that multi-phase encounters sharing the same
-    /// <c>zoneName</c> (e.g. Lindwurm / Lindwurm II) are disambiguated.
-    /// </summary>
-    private static bool MatchesEncounter(
-        JsonElement enc, string? dutyName, TomestoneEncounterParams? encounterParams)
+    private static bool MatchesEncounter(JsonElement candidate, string? dutyName, TomestoneEncounterParams? encounter)
     {
-        // Prefer precise slug matching when encounter params are known
-        if (encounterParams != null)
+        var zoneName = candidate.TryGetProperty("zoneName", out var zoneEl) ? zoneEl.GetString() : null;
+        if (encounter == null)
         {
-            // Attempt 1: canonical field names (may be present in some response shapes)
-            var matchesGroup = enc.TryGetProperty("encounterGroupCanonicalName", out var groupEl) &&
-                string.Equals(groupEl.GetString(), encounterParams.Zone, StringComparison.OrdinalIgnoreCase);
-            var matchesExpansion = enc.TryGetProperty("expansionCanonicalName", out var expEl) &&
-                string.Equals(expEl.GetString(), encounterParams.Expansion, StringComparison.OrdinalIgnoreCase);
-
-            if (matchesGroup && matchesExpansion &&
-                enc.TryGetProperty("name", out var nameEl))
-            {
-                var slug = BuildTomestoneSlug(nameEl.GetString() ?? string.Empty);
-                if (string.Equals(slug, encounterParams.Encounter, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            // Attempt 2: slug the zoneName field (matches most encounter types, e.g. ultimates, extremes)
-            if (enc.TryGetProperty("zoneName", out var zoneNameEl))
-            {
-                var zoneSlug = BuildTomestoneSlug(zoneNameEl.GetString() ?? string.Empty);
-                if (string.Equals(zoneSlug, encounterParams.Encounter, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            // Attempt 3: slug the name field (multi-phase encounters like Lindwurm / Lindwurm II)
-            if (enc.TryGetProperty("name", out var encNameEl))
-            {
-                var nameSlug = BuildTomestoneSlug(encNameEl.GetString() ?? string.Empty);
-                if (string.Equals(nameSlug, encounterParams.Encounter, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return !string.IsNullOrWhiteSpace(dutyName) && string.Equals(zoneName, dutyName, StringComparison.OrdinalIgnoreCase);
         }
 
-        // Fallback: match by zoneName when no encounter params are available
-        if (!string.IsNullOrWhiteSpace(dutyName) &&
-            enc.TryGetProperty("zoneName", out var zoneEl))
-        {
-            var zoneName = zoneEl.GetString();
-            if (zoneName != null && zoneName.Equals(dutyName, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        // The slug is that of the zone name for ultimates, and of the boss name for everything else.
+        var name = candidate.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+        return string.Equals(Slugify(zoneName), encounter.Encounter, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Slugify(name), encounter.Encounter, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Extracts clear / progression data from a matched encounter element
-    /// within the profile response.
-    /// </summary>
-    private static void ExtractEncounterData(TomestoneCharacterInfo info, JsonElement enc)
+    private static void ExtractEncounterData(TomestoneCharacterInfo info, JsonElement encounter)
     {
-        // ── Activity present → encounter has been cleared ────────────────────
-        // The profile endpoint's activity object only provides timestamps, not
-        // a kill count, so we record 1 to indicate the encounter is cleared.
-        if (enc.TryGetProperty("activity", out var actEl) &&
-            actEl.ValueKind == JsonValueKind.Object)
+        // The profile only gives timestamps for a cleared encounter, not a kill count.
+        if (encounter.TryGetProperty("activity", out var activity) && activity.ValueKind == JsonValueKind.Object)
         {
             info.TotalClears = 1;
 
-            if (actEl.TryGetProperty("completionWeek", out var cwEl))
+            var week = activity.TryGetProperty("completionWeek", out var weekEl) ? weekEl.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(week))
             {
-                var cw = cwEl.GetString();
-                if (!string.IsNullOrWhiteSpace(cw))
-                {
-                    info.CompletionWeek = cw;
-                }
+                info.CompletionWeek = week;
             }
         }
 
-        // ── Progression present → still progging ─────────────────────────────
-        if (enc.TryGetProperty("progression", out var progEl) &&
-            progEl.ValueKind == JsonValueKind.Object)
+        if (!encounter.TryGetProperty("progression", out var progression) || progression.ValueKind != JsonValueKind.Object)
         {
-            // Mechanic name (e.g. "Splattershed")
-            if (progEl.TryGetProperty("mechanic", out var mechEl) &&
-                mechEl.ValueKind == JsonValueKind.Object &&
-                mechEl.TryGetProperty("name", out var mechNameEl))
-            {
-                var mechName = mechNameEl.GetString();
+            return;
+        }
 
-                // Only suffix the mechanic number when > 1 (i.e. "Splattershed #2"),
-                // since a single occurrence doesn't need disambiguation.
-                var mechNum = 0;
-                if (mechEl.TryGetProperty("number", out var numEl))
-                {
-                    numEl.TryGetInt32(out mechNum);
-                }
+        if (progression.TryGetProperty("mechanic", out var mechanicEl) && FormatMechanic(mechanicEl) is { } mechanic)
+        {
+            info.ProgPoint = mechanic;
+        }
 
-                if (!string.IsNullOrWhiteSpace(mechName))
-                {
-                    info.ProgPoint = mechNum > 1 ? $"{mechName} #{mechNum}" : mechName;
-                }
-            }
+        // Already formatted by the API, such as "35.82%".
+        var display = progression.TryGetProperty("displayPercent", out var displayEl) ? displayEl.GetString() : null;
+        if (!string.IsNullOrWhiteSpace(display))
+        {
+            info.DisplayPercent = display;
+        }
 
-            // Use "displayPercent" from the API response as the shown percentage.
-            // The API returns a pre-formatted string (e.g. "35.82%") or empty.
-            if (progEl.TryGetProperty("displayPercent", out var displayPctEl))
-            {
-                var dp = displayPctEl.GetString();
-                if (!string.IsNullOrWhiteSpace(dp))
-                {
-                    info.DisplayPercent = dp;
-                }
-            }
-
-            // Fallback: use the percentage string (e.g. "57%")
-            if (string.IsNullOrWhiteSpace(info.ProgPoint) &&
-                progEl.TryGetProperty("percent", out var pctEl))
-            {
-                info.ProgPoint = pctEl.GetString();
-            }
+        if (string.IsNullOrWhiteSpace(info.ProgPoint) && progression.TryGetProperty("percent", out var percent))
+        {
+            info.ProgPoint = percent.GetString();
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private – Helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Creates an <see cref="HttpRequestMessage"/> with Bearer token auth
-    /// if a Tomestone API key is configured.
-    /// </summary>
-    private HttpRequestMessage CreateAuthenticatedRequest(string url)
+    // "Honey B. Lovely" becomes "honey-b-lovely".
+    private static string Slugify(string? text)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        var apiKey = plugin.Configuration.TomestoneApiKey;
-        if (!string.IsNullOrWhiteSpace(apiKey))
-        {
-            request.Headers.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-        }
-
-        return request;
-    }
-
-    private static string BuildTomestoneSlug(string playerName)
-    {
-        if (string.IsNullOrWhiteSpace(playerName))
+        if (string.IsNullOrWhiteSpace(text))
         {
             return string.Empty;
         }
 
-        // Tomestone slugs are lowercase, with spaces replaced by hyphens and
-        // all non-alphanumeric / non-hyphen characters stripped.
-        // e.g. "Jo'hn Fantasy" → "jo-hn-fantasy"
-        var lower = playerName.Trim().ToLowerInvariant();
-        var slug = SlugStripRegex().Replace(lower, string.Empty);
-        var parts = slug.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return string.Join("-", parts);
+        var stripped = SlugStripRegex().Replace(text.Trim().ToLowerInvariant(), string.Empty);
+        return string.Join("-", stripped.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    private static string? ReadIdValue(JsonElement element)
-    {
-        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out var idValue))
-        {
-            return idValue.ToString();
-        }
-
-        if (element.ValueKind == JsonValueKind.String)
-        {
-            return element.GetString();
-        }
-
-        return null;
-    }
+    #endregion
 }
 
-/// <summary>
-/// Parameters needed to query Tomestone.gg API for a specific encounter.
-/// </summary>
 public record TomestoneEncounterParams(string Expansion, string Zone, string Encounter);
 
-/// <summary>Data returned from a Tomestone.gg character lookup.</summary>
 public class TomestoneCharacterInfo
 {
-    public string Name { get; set; } = string.Empty;
-    public string World { get; set; } = string.Empty;
+    // The Lodestone ID.
     public string? CharacterId { get; set; }
     public string? ProgPoint { get; set; }
     public string? DisplayPercent { get; set; }

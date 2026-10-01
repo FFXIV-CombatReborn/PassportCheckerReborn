@@ -5,10 +5,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>
-/// Indents a block of dependent settings and draws a guide line down its leading edge, so it reads
-/// as belonging to the switch above it.
-/// </summary>
 internal static class M3SubGroup
 {
     public static Scope Begin(Vector4? accent = null)
@@ -43,36 +39,25 @@ internal static class M3SubGroup
     }
 }
 
-/// <summary>Geometry and interaction state for one setting row, returned by <see cref="M3SettingRow.Begin"/>.</summary>
 internal readonly struct M3RowInfo
 {
     public Vector2 Min { get; init; }
     public Vector2 Max { get; init; }
-
-    /// <summary>Where the caller should place its trailing control.</summary>
     public Vector2 ControlPosition { get; init; }
-
-    /// <summary>Width the trailing control was laid out for.</summary>
     public float ControlWidth { get; init; }
-
-    /// <summary>True while the pointer is anywhere over the row.</summary>
     public bool Hovered { get; init; }
 
-    /// <summary>Set when the control had to be moved onto its own line below the label.</summary>
+    // Set when the control had to move onto its own line below the label.
     public bool ControlBelow { get; init; }
 }
 
-/// <summary>
-/// The Material list item every configuration setting is rendered as: a headline, optional
-/// supporting text wrapped beneath it, and a trailing control aligned to the right edge.
-/// </summary>
 internal static class M3SettingRow
 {
     private static float PaddingX => 12f * M3.Scale;
     private static float PaddingY => 9f * M3.Scale;
     private static float ControlGap => 16f * M3.Scale;
 
-    /// <summary>Narrowest label column we will accept before the control moves onto its own line.</summary>
+    // Narrowest label column before the control moves onto its own line.
     private static float MinLabelWidth => 120f * M3.Scale;
 
     public static M3RowInfo Begin(
@@ -89,9 +74,6 @@ internal static class M3SettingRow
         var s = M3.Scheme;
         var scale = M3.Scale;
 
-        // End() always leaves the cursor at the start of a line (ImGui resets the x on every item),
-        // so no explicit line break is needed here — and testing for one would misfire inside a
-        // table cell, where the line start is not the window's content start.
         var min = ImGui.GetCursorScreenPos();
         var width = MathF.Max(64f * scale, ImGui.GetContentRegionAvail().X - M3Card.RightInset);
 
@@ -160,8 +142,6 @@ internal static class M3SettingRow
 
             if (strikeThrough)
             {
-                // Settings hidden by a job filter are struck through rather than removed, so the
-                // list does not reflow every time the player changes job.
                 var lineCount = MathF.Max(1f, MathF.Round(labelSize.Y / ImGui.GetTextLineHeight()));
                 var lineHeight = labelSize.Y / lineCount;
                 for (var line = 0; line < (int)lineCount; line++)
@@ -202,17 +182,12 @@ internal static class M3SettingRow
         };
     }
 
-    /// <summary>Closes a row, restoring the cursor below it.</summary>
     public static void End(in M3RowInfo row)
     {
         ImGui.SetCursorScreenPos(new Vector2(row.Min.X, row.Max.Y));
         ImGui.Dummy(new Vector2(row.Max.X - row.Min.X, 2f * M3.Scale));
     }
 
-    /// <summary>
-    /// A row whose whole body is one pressable target, used for navigation-style entries such as
-    /// the search results list.
-    /// </summary>
     public static bool NavigationRow(string id, string label, string? supporting, FontAwesomeIcon leadingIcon, FontAwesomeIcon trailingIcon, Vector4? accent = null)
     {
         var s = M3.Scheme;

@@ -17,19 +17,17 @@ internal static class FontManager
     private static readonly Dictionary<int, CachedFont> Handles = [];
     private static readonly Dictionary<int, CachedFont> DefaultHandles = [];
 
-    /// <summary>The Axis game font at <paramref name="size"/> pixels.</summary>
     public static ImFontPtr GetFont(float size)
     {
         // Round to a whole pixel so near-identical sizes share one handle.
         var key = Math.Max(1, (int)MathF.Round(size));
 
-        // The pixel-size constructor matters: GetRecommendedFamilyAndSize takes points, and feeding
-        // it pixels snaps each size up to the next game font (a 22px headline comes out at 48px).
+        // The pixel-size constructor matters: GetRecommendedFamilyAndSize takes points, and given
+        // pixels picks a much larger font.
         return Resolve(Handles, GameFontCapacity, key, static px =>
             PassportCheckerReborn.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamily.Axis, px)));
     }
 
-    /// <summary>Dalamud's default font at <paramref name="scale"/> times its configured size.</summary>
     public static ImFontPtr GetDefaultFont(float scale)
     {
         var key = Math.Max(1, (int)MathF.Round(PassportCheckerReborn.PluginInterface.UiBuilder.FontDefaultSizePx * scale));
@@ -56,8 +54,7 @@ internal static class FontManager
                 return font;
             }
 
-            // The atlas builds asynchronously; until this size is ready, draw in the nearest size
-            // that is, rather than dropping back to the body font and jumping when it arrives.
+            // The atlas builds asynchronously; until this size is ready, the nearest loaded one stands in.
             var nearest = -1;
             ImFontPtr? fallback = null;
             foreach (var (other, candidate) in cache)

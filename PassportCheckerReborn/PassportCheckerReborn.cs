@@ -32,13 +32,13 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
     [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
 
-    internal const string Version = "0.1.0";
+    internal static readonly string Version = typeof(PassportCheckerReborn).Assembly.GetName().Version?.ToString() ?? "0.0.0.0";
 
     private const string CommandName = "/pfchecker";
-    public const string ALTCOMMAND = "/pcr";
+    private const string AltCommandName = "/pcr";
     private const string PartyListCommandName = "/pcrparty";
 
-    /// <summary>The loaded configuration, for code with no plugin instance to hand (such as the UI theme).</summary>
+    // Static for code with no plugin instance to hand, such as the UI theme.
     internal static Configuration Config { get; private set; } = null!;
 
     public Configuration Configuration => Config;
@@ -47,12 +47,14 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
     private MainWindow MainWindow { get; set; } = null!;
     internal PFWindow PFWindow { get; set; } = null!;
     internal PartyListWindow PartyListWindow { get; set; } = null!;
+    internal PFListFilterWindow PFListFilterWindow { get; set; } = null!;
 
     internal TomestoneService TomestoneService { get; private set; } = null!;
     internal FFLogsService FFLogsService { get; private set; } = null!;
     internal CidCache CidCache { get; private set; } = null!;
     internal BlacklistCache BlacklistCache { get; private set; } = null!;
     internal PartyFinderManager PartyFinderManager { get; private set; } = null!;
+    internal PartyFinderListTweaks PartyFinderListTweaks { get; private set; } = null!;
     internal PartyListMonitorService PartyListMonitorService { get; private set; } = null!;
 
     public async Task LoadAsync(CancellationToken cancellationToken)
@@ -63,27 +65,30 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
         FFLogsService = new FFLogsService(this);
         CidCache = new CidCache();
         BlacklistCache = new BlacklistCache();
-        PartyListMonitorService = new PartyListMonitorService(this);
 
-        // Hook registration and addon event subscriptions must run on the main thread.
+        // Hooks, addon listeners and windows must be set up on the framework thread.
         await Framework.RunOnFrameworkThread(() =>
         {
+            PartyListMonitorService = new PartyListMonitorService(this);
             PartyFinderManager = new PartyFinderManager(this);
-            PFWindowManager.Enable(this, PartyFinderManager);
+            PartyFinderListTweaks = new PartyFinderListTweaks(this);
+            PFWindowManager.ApplySetting();
 
             MainWindow = new MainWindow(this);
             PFWindow = new PFWindow(this);
             PartyListWindow = new PartyListWindow(this);
+            PFListFilterWindow = new PFListFilterWindow(this);
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(PFWindow);
             WindowSystem.AddWindow(PartyListWindow);
+            WindowSystem.AddWindow(PFListFilterWindow);
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
                 HelpMessage = "Open Passport Check Reborn menu."
             });
-            CommandManager.AddHandler(ALTCOMMAND, new CommandInfo(OnCommand)
+            CommandManager.AddHandler(AltCommandName, new CommandInfo(OnCommand)
             {
                 HelpMessage = "Open Passport Check Reborn menu."
             });
@@ -92,46 +97,33 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
                 HelpMessage = "Toggle the Party List Overlay on or off."
             });
 
-            // Register framework update for party list monitoring
-            Framework.Update += PartyListMonitorService.OnFrameworkUpdate;
-
             PluginInterface.UiBuilder.Draw += ManageWindowStates;
             PluginInterface.UiBuilder.Draw += DrawWindows;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         });
-
-        Log.Information($"[PassportCheckerReborn] Plugin loaded.");
     }
 
     public async ValueTask DisposeAsync()
     {
-        // Hook teardown and UI deregistration must run on the main thread.
         await Framework.RunOnFrameworkThread(() =>
         {
-            // Unregister framework update for party list monitoring
-            Framework.Update -= PartyListMonitorService.OnFrameworkUpdate;
-
             PluginInterface.UiBuilder.Draw -= ManageWindowStates;
             PluginInterface.UiBuilder.Draw -= DrawWindows;
             PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
 
             WindowSystem.RemoveAllWindows();
 
-            MainWindow?.Dispose();
-            PFWindow?.Dispose();
-            PartyListWindow?.Dispose();
-
+            PartyFinderListTweaks?.Dispose();
             PartyFinderManager?.Dispose();
+            PartyListMonitorService?.Dispose();
+            PFWindowManager.Dispose();
             FontManager.DisposeAll();
 
             CommandManager.RemoveHandler(CommandName);
-            CommandManager.RemoveHandler(ALTCOMMAND);
+            CommandManager.RemoveHandler(AltCommandName);
             CommandManager.RemoveHandler(PartyListCommandName);
         });
 
-        PFWindowManager.Disable();
-
-        PartyListMonitorService?.Dispose();
         CidCache?.Dispose();
         BlacklistCache?.Dispose();
         TomestoneService?.Dispose();
@@ -162,58 +154,35 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
         MainWindow.Toggle();
     }
 
-    public void ToggleOverlay() => PFWindow.Toggle();
-
     private void DrawWindows()
     {
         M3.BeginFrame();
         WindowSystem.Draw();
     }
 
-    /// <summary>
-    /// Runs every frame before WindowSystem.Draw to manage auto-open/close
-    /// state for windows that depend on external conditions.
-    /// </summary>
-    private unsafe void ManageWindowStates()
+    // Opens and closes the windows that follow the game's state. Runs before WindowSystem.Draw.
+    private void ManageWindowStates()
     {
-        // PartyListWindow: open when config enabled, and at least one integration enabled
-        if (!Configuration.ShowPartyListOverlay
-            || (!Configuration.EnableFFLogsIntegrationOverlay && !Configuration.EnableTomestoneIntegration))
+        var cfg = Configuration;
+
+        PFListFilterWindow.IsOpen = cfg.EnableOneClickJobFilter && PartyFinderManager.IsListOpen;
+
+        PartyListWindow.IsOpen = cfg.ShowPartyListOverlay
+            && (cfg.EnableFFLogsIntegrationOverlay || cfg.EnableTomestoneIntegration)
+            && IsInParty()
+            && !(cfg.HidePartyListInDuty && Condition[ConditionFlag.BoundByDuty])
+            && !(cfg.HidePartyListInCombat && Condition[ConditionFlag.InCombat]);
+    }
+
+    private static unsafe bool IsInParty()
+    {
+        if (PartyList.Length > 0)
         {
-            PartyListWindow.IsOpen = false;
-            return;
+            return true;
         }
 
-        // Check if party has members via IPartyList (works for regular parties)
-        var hasPartyMembers = PartyList.Length > 0;
-
-        // Fallback: check InfoProxyCrossRealm for crossworld parties where IPartyList may be empty
-        // (follows the same pattern as ReadyCheckHelper for detecting cross-realm parties)
-        if (!hasPartyMembers)
-        {
-            try
-            {
-                var cwProxy = InfoProxyCrossRealm.Instance();
-                if (cwProxy != null && cwProxy->IsInCrossRealmParty)
-                {
-                    hasPartyMembers = true;
-                }
-            }
-            catch
-            {
-                // Ignore failures reading cross-realm state
-            }
-        }
-
-        if (!hasPartyMembers)
-        {
-            PartyListWindow.IsOpen = false;
-            return;
-        }
-
-        // Hide in duty and/or combat based on individual settings
-        var hideNow = (Configuration.HidePartyListInDuty && Condition[ConditionFlag.BoundByDuty])
-                   || (Configuration.HidePartyListInCombat && Condition[ConditionFlag.InCombat]);
-        PartyListWindow.IsOpen = !hideNow;
+        // A cross-world party is not in IPartyList.
+        var crossRealm = InfoProxyCrossRealm.Instance();
+        return crossRealm != null && crossRealm->IsInCrossRealmParty;
     }
 }
