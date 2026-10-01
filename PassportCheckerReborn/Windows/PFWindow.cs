@@ -1,13 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Numerics;
-using System.Threading.Tasks;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Services;
 using PassportCheckerReborn.UI;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Numerics;
+using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Windows;
 

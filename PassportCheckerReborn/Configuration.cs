@@ -61,6 +61,12 @@ public class Configuration : IPluginConfiguration
     /// <summary>Seed colour the Material theme generates every window's palette from.</summary>
     public Vector4 UiAccentColor { get; set; } = UI.M3.DefaultSeed;
 
+    /// <summary>Scales the text in every window, on top of Dalamud's own font settings.</summary>
+    public float UiTextScale { get; set; } = 1f;
+
+    /// <summary>Scales the padding, spacing and controls in every window.</summary>
+    public float UiElementScale { get; set; } = 1f;
+
     public void Save()
     {
         PassportCheckerReborn.PluginInterface.SavePluginConfig(this);

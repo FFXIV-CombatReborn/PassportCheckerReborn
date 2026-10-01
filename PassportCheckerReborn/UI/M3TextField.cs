@@ -4,14 +4,9 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.UI;
 
-/// <summary>
-/// A Material filled text field. ImGui's own input widget still does the editing (selection,
-/// clipboard, IME) and covers the whole container, so a click anywhere inside focuses it; only the
-/// painting is replaced, the same split <see cref="M3Widgets.SearchField"/> uses.
-/// </summary>
 internal static class M3TextField
 {
-    public static float Height => 40f * M3.Scale;
+    public static float Height => M3.FitText(40f, 8f);
 
     public static bool Draw(string id, string hint, ref string text, float width, int maxLength = 256, bool password = false)
     {

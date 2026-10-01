@@ -96,7 +96,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
             Framework.Update += PartyListMonitorService.OnFrameworkUpdate;
 
             PluginInterface.UiBuilder.Draw += ManageWindowStates;
-            PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+            PluginInterface.UiBuilder.Draw += DrawWindows;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         });
 
@@ -112,7 +112,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
             Framework.Update -= PartyListMonitorService.OnFrameworkUpdate;
 
             PluginInterface.UiBuilder.Draw -= ManageWindowStates;
-            PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+            PluginInterface.UiBuilder.Draw -= DrawWindows;
             PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
 
             WindowSystem.RemoveAllWindows();
@@ -140,7 +140,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        MainWindow.Toggle();
+        ToggleMainUi();
     }
 
     private void OnPartyListCommand(string command, string args)
@@ -150,8 +150,25 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
         ChatGui.Print($"[PassportChecker] Party List Overlay {(Configuration.ShowPartyListOverlay ? "shown" : "hidden")}.");
     }
 
-    public void ToggleMainUi() => MainWindow.Toggle();
+    public void ToggleMainUi()
+    {
+        // Like a taskbar button: a minimized window comes back rather than closing.
+        if (MainWindow is { IsOpen: true, IsMinimized: true })
+        {
+            MainWindow.Restore();
+            return;
+        }
+
+        MainWindow.Toggle();
+    }
+
     public void ToggleOverlay() => PFWindow.Toggle();
+
+    private void DrawWindows()
+    {
+        M3.BeginFrame();
+        WindowSystem.Draw();
+    }
 
     /// <summary>
     /// Runs every frame before WindowSystem.Draw to manage auto-open/close
