@@ -49,6 +49,9 @@ public sealed class PartyFinderManager : IDisposable
     private volatile CharaCardRequest? charaCardRequest;
     private CancellationTokenSource? resolveCts;
 
+    // Shared by every lookup that asks about the same player while the check runs.
+    private readonly ConcurrentDictionary<ulong, Task<CidCacheEntry?>> refreshes = new();
+
     public PartyFinderManager(PassportCheckerReborn plugin)
     {
         this.plugin = plugin;
@@ -440,15 +443,7 @@ public sealed class PartyFinderManager : IDisposable
                 break;
 
             case { Name.Length: > 0 } resolved:
-                var world = GetWorldName(resolved.WorldId);
-                plugin.CidCache.Set(contentId, resolved.Name, resolved.WorldId, world);
-                currentMembers[index] = member with
-                {
-                    Name = resolved.Name,
-                    World = world,
-                    WorldId = resolved.WorldId,
-                    NameState = MemberNameState.Resolved,
-                };
+                StoreResolvedName(contentId, resolved);
                 break;
 
             default:
@@ -456,6 +451,71 @@ public sealed class PartyFinderManager : IDisposable
                 currentMembers[index] = member with { NameState = MemberNameState.Unresolved };
                 break;
         }
+    }
+
+    private void StoreResolvedName(ulong contentId, CharaCardResult resolved)
+    {
+        var world = GetWorldName(resolved.WorldId);
+        plugin.CidCache.Set(contentId, resolved.Name, resolved.WorldId, world);
+
+        var index = currentMembers.FindIndex(member => member.ContentId == contentId);
+        if (index >= 0)
+        {
+            currentMembers[index] = currentMembers[index] with
+            {
+                Name = resolved.Name,
+                World = world,
+                WorldId = resolved.WorldId,
+                NameState = MemberNameState.Resolved,
+            };
+        }
+    }
+
+    // A cached name goes stale after a name change or world transfer, so one a lookup could not find is
+    // checked against the adventure plate, at most once a day. Null if the name is unchanged.
+    public async Task<PartyMemberInfo?> RefreshMemberAsync(PartyMemberInfo member)
+    {
+        if (member.ContentId == 0)
+        {
+            return null;
+        }
+
+        var refresh = refreshes.GetOrAdd(member.ContentId, contentId => Task.Run(() => RefreshEntryAsync(contentId)));
+        CidCacheEntry? entry;
+        try
+        {
+            entry = await refresh;
+        }
+        finally
+        {
+            refreshes.TryRemove(KeyValuePair.Create(member.ContentId, refresh));
+        }
+
+        return entry != null && (entry.Name != member.Name || entry.WorldId != member.WorldId)
+            ? member with { Name = entry.Name, World = entry.WorldName, WorldId = entry.WorldId }
+            : null;
+    }
+
+    private async Task<CidCacheEntry?> RefreshEntryAsync(ulong contentId)
+    {
+        var cache = plugin.CidCache;
+        var due = await PassportCheckerReborn.Framework.RunOnFrameworkThread(() =>
+        {
+            if (!cache.NeedsRefresh(contentId))
+            {
+                return false;
+            }
+
+            cache.MarkRefreshed(contentId);
+            return true;
+        });
+
+        if (due && await RequestCharaCardAsync(contentId, CancellationToken.None) is { Name.Length: > 0 } resolved)
+        {
+            await PassportCheckerReborn.Framework.RunOnFrameworkThread(() => StoreResolvedName(contentId, resolved));
+        }
+
+        return await PassportCheckerReborn.Framework.RunOnFrameworkThread(() => cache.TryGet(contentId, out var entry) ? entry : null);
     }
 
     // Runs off the framework thread. Null means the game never answered.

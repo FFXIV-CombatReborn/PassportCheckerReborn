@@ -13,6 +13,12 @@
         "requested": "[2.0.5, )",
         "resolved": "2.0.5",
         "contentHash": "8LrlvI1KpjjJ4VGSqZ16yoOCKlQnYS+Y8rYNifNrscmVh5anJcF9E4e0NiDP30BHBMUbkoJ5KdcxoRWM7Pz9Aw=="
+      },
+      "RebornMaterial": {
+        "type": "Direct",
+        "requested": "[7.5.6.1, )",
+        "resolved": "7.5.6.1",
+        "contentHash": "jFrp7rlChGAYQFn+1z2tdZ5shtoLa0MJFntSNADYIvLAuDSFcfZlBTuG5qroFlDgU2nP+3vdBwX2M5qXjQvUEQ=="
       }
     }
   }

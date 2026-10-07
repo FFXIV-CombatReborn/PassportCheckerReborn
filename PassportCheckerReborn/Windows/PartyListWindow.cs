@@ -2,9 +2,9 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Services;
-using PassportCheckerReborn.UI;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 
@@ -56,7 +56,7 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
 
     public override void PreDraw()
     {
-        theme = M3Style.Push(compact: true);
+        theme = M3Style.Push(M3Density.Compact);
 
         var position = plugin.Configuration.PartyListOverlayPosition;
         if (position == PartyListOverlayPosition.Unbound)
@@ -337,19 +337,13 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         var results = new Dictionary<int, EncounterParseResult?>();
         try
         {
-            if (FFLogsService.GetEncounterIdsForDuty(dutyName) is { } encounterIds)
+            var service = plugin.FFLogsService;
+            var lookup = FFLogsService.GetEncounterIdsForDuty(dutyName) is { } encounterIds
+                ? service.GetEncounterDataAsync(party, encounterIds)
+                : service.GetOverallParsesAsync(party);
+            foreach (var (index, result) in await lookup)
             {
-                foreach (var (index, result) in await plugin.FFLogsService.GetEncounterDataAsync(party, encounterIds))
-                {
-                    results[index] = result;
-                }
-            }
-            else
-            {
-                for (var i = 0; i < party.Count; i++)
-                {
-                    results[i] = await plugin.FFLogsService.GetOverallParseAsync(party[i].Name, party[i].World);
-                }
+                results[index] = result;
             }
         }
         catch (Exception ex)
@@ -372,9 +366,11 @@ public class PartyListWindow(PassportCheckerReborn plugin) : Window("Party Membe
         var results = new Dictionary<int, TomestoneCharacterInfo?>();
         try
         {
-            for (var i = 0; i < party.Count; i++)
+            var infos = await Task.WhenAll(party.Select(member =>
+                plugin.TomestoneService.GetCharacterInfoAsync(member.Name, member.World, dutyName)));
+            for (var i = 0; i < infos.Length; i++)
             {
-                results[i] = await plugin.TomestoneService.GetCharacterInfoAsync(party[i].Name, party[i].World, dutyName);
+                results[i] = infos[i];
             }
         }
         catch (Exception ex)

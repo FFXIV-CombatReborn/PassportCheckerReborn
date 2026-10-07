@@ -2,17 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Services;
 
-public sealed record CidCacheEntry(string Name, ushort WorldId, string WorldName, DateTime LastSeen);
+public sealed record CidCacheEntry(
+    string Name,
+    ushort WorldId,
+    string WorldName,
+    DateTime LastSeen,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] DateTime LastRefreshed = default);
 
 // Content ID to last-known name and world, kept on disk between sessions. A content ID outlives name
 // and world changes, so an entry may be stale; fresh data always overwrites it.
 // Not thread-safe: read and written on the framework thread only.
 public sealed class CidCache : IDisposable
 {
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromDays(1);
+
     private readonly string filePath;
     private readonly Dictionary<ulong, CidCacheEntry> entries = [];
     private bool dirty;
@@ -42,6 +50,22 @@ public sealed class CidCache : IDisposable
 
         entries[contentId] = new CidCacheEntry(name, worldId, worldName, DateTime.UtcNow);
         dirty = true;
+    }
+
+    // Worth checking against the player's adventure plate when neither seen nor checked for a day.
+    public bool NeedsRefresh(ulong contentId)
+    {
+        var cutoff = DateTime.UtcNow - RefreshInterval;
+        return entries.TryGetValue(contentId, out var entry) && entry.LastSeen < cutoff && entry.LastRefreshed < cutoff;
+    }
+
+    public void MarkRefreshed(ulong contentId)
+    {
+        if (entries.TryGetValue(contentId, out var entry))
+        {
+            entries[contentId] = entry with { LastRefreshed = DateTime.UtcNow };
+            dirty = true;
+        }
     }
 
     // The file runs to megabytes, so it is written off the calling thread.

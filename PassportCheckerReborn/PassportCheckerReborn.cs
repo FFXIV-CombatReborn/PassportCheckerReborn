@@ -6,7 +6,6 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using PassportCheckerReborn.Services;
-using PassportCheckerReborn.UI;
 using PassportCheckerReborn.Windows;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,7 +37,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
     private const string AltCommandName = "/pcr";
     private const string PartyListCommandName = "/pcrparty";
 
-    // Static for code with no plugin instance to hand, such as the UI theme.
+    // Static for code with no plugin instance to hand, such as PFWindowManager.
     internal static Configuration Config { get; private set; } = null!;
 
     public Configuration Configuration => Config;
@@ -60,6 +59,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
     public async Task LoadAsync(CancellationToken cancellationToken)
     {
         Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        M3.Initialize(PluginInterface, Config);
 
         TomestoneService = new TomestoneService(this);
         FFLogsService = new FFLogsService(this);
@@ -117,7 +117,7 @@ public sealed class PassportCheckerReborn : IAsyncDalamudPlugin
             PartyFinderManager?.Dispose();
             PartyListMonitorService?.Dispose();
             PFWindowManager.Dispose();
-            FontManager.DisposeAll();
+            M3.Dispose();
 
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler(AltCommandName);

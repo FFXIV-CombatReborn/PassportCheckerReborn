@@ -2,10 +2,10 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Services;
-using PassportCheckerReborn.UI;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 
@@ -41,7 +41,7 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
 
     public override unsafe void PreDraw()
     {
-        theme = M3Style.Push(compact: true);
+        theme = M3Style.Push(M3Density.Compact);
 
         var addonPtr = PassportCheckerReborn.GameGui.GetAddonByName("LookingForGroupDetail", 1);
         if (addonPtr.IsNull)
@@ -151,16 +151,15 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         if (cfg.EnableTomestoneIntegration)
         {
             var hasKey = cfg.HasTomestoneKey();
-            if (LookupButton("##ts_all", "Tomestone", hasKey, "Tomestone API Key Needed", resolving, tomestoneLoading))
+            var tooltip = !hasKey
+                ? "Add your Tomestone API key in Settings → Tomestone."
+                : LookupTooltip("Tomestone", resolving, tomestoneLoading);
+            if (LookupButton("##ts_all", "Tomestone", hasKey, "Tomestone API Key Needed", resolving, tomestoneLoading, tooltip))
             {
                 tomestoneLoading = true;
                 tomestoneResults = new ConcurrentDictionary<int, TomestoneCharacterInfo?>();
                 _ = FetchTomestoneAsync([.. members], tomestoneResults);
             }
-
-            ImguiTooltips.HoveredTooltip(!hasKey
-                ? "Add your Tomestone API key in Settings → Tomestone."
-                : LookupTooltip("Tomestone", resolving, tomestoneLoading));
 
             if (cfg.EnableFFLogsIntegrationOverlay)
             {
@@ -171,28 +170,27 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         if (cfg.EnableFFLogsIntegrationOverlay)
         {
             var hasCredentials = cfg.HasFFLogsCredentials();
-            if (LookupButton("##ff_all", "FFLogs", hasCredentials, "FFLogs API Key Needed", resolving, fflogsLoading))
+            var tooltip = !hasCredentials
+                ? "Add your FFLogs API client in Settings → FFLogs."
+                : LookupTooltip("FFLogs", resolving, fflogsLoading);
+            if (LookupButton("##ff_all", "FFLogs", hasCredentials, "FFLogs API Key Needed", resolving, fflogsLoading, tooltip))
             {
                 fflogsLoading = true;
                 fflogsResults = new ConcurrentDictionary<int, EncounterParseResult?>();
                 _ = FetchFFLogsAsync([.. members], fflogsResults);
             }
-
-            ImguiTooltips.HoveredTooltip(!hasCredentials
-                ? "Add your FFLogs API client in Settings → FFLogs."
-                : LookupTooltip("FFLogs", resolving, fflogsLoading));
         }
     }
 
     // Disabled until the integration is configured and every name is resolved, and while it is running.
-    private static bool LookupButton(string id, string name, bool configured, string unconfiguredLabel, bool resolving, bool loading)
+    private static bool LookupButton(string id, string name, bool configured, string unconfiguredLabel, bool resolving, bool loading, string tooltip)
     {
         var (label, icon) = !configured ? (unconfiguredLabel, FontAwesomeIcon.Key)
             : loading ? (name, FontAwesomeIcon.HourglassHalf)
             : resolving ? ($"{name} (resolving…)", FontAwesomeIcon.HourglassHalf)
             : (name, FontAwesomeIcon.Search);
 
-        return M3Widgets.Button(id, label, M3ButtonStyle.Tonal, icon, enabled: configured && !resolving && !loading);
+        return M3Widgets.Button(id, label, M3ButtonStyle.Tonal, icon, enabled: configured && !resolving && !loading, tooltip: tooltip);
     }
 
     private static string LookupTooltip(string name, bool resolving, bool loading)
@@ -291,41 +289,23 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
     {
         try
         {
-            var service = plugin.FFLogsService;
-            if (FFLogsService.GetEncounterIdsForDuty(plugin.PartyFinderManager.LookupDutyName) is not { } encounterIds)
-            {
-                // The duty has no FFLogs encounter, so each player's overall standing is shown instead.
-                for (var i = 0; i < members.Length; i++)
-                {
-                    results[i] = members[i].IsResolved
-                        ? await service.GetOverallParseAsync(members[i].Name, members[i].World)
-                        : null;
-                }
+            var encounterIds = FFLogsService.GetEncounterIdsForDuty(plugin.PartyFinderManager.LookupDutyName);
+            await LookUpFFLogsAsync(members, encounterIds, results);
 
-                return;
+            // The members array is this lookup's own copy. Everyone not renamed is answered from cache.
+            var renamed = false;
+            foreach (var (index, result) in results)
+            {
+                if (result is { CharacterNotFound: true } && await plugin.PartyFinderManager.RefreshMemberAsync(members[index]) is { } member)
+                {
+                    members[index] = member;
+                    renamed = true;
+                }
             }
 
-            var encounterResults = await service.GetEncounterDataAsync(members, encounterIds);
-            foreach (var (index, result) in encounterResults)
+            if (renamed)
             {
-                results[index] = result;
-            }
-
-            // Players with nothing logged for the encounter get their overall average beside "No logs".
-            foreach (var (index, result) in encounterResults)
-            {
-                var hasEncounterData = result.TotalKills > 0
-                    || result.LowestBossHpPct.HasValue
-                    || result.Phase1BestParse.HasValue
-                    || result.Phase2BestParse.HasValue
-                    || result.Phase2LowestBossHpPct.HasValue;
-
-                if (!hasEncounterData
-                    && members[index].IsResolved
-                    && await service.GetBestPerfAvgAsync(members[index].Name, members[index].World) is { } average)
-                {
-                    results[index] = result with { AverageParsePercent = average };
-                }
+                await LookUpFFLogsAsync(members, encounterIds, results);
             }
         }
         catch (Exception ex)
@@ -341,17 +321,68 @@ public class PFWindow(PassportCheckerReborn plugin) : Window("PF Member Info##PF
         }
     }
 
+    private async Task LookUpFFLogsAsync(
+        PartyMemberInfo[] members, (int Primary, int? Secondary)? encounterIds, ConcurrentDictionary<int, EncounterParseResult?> results)
+    {
+        var service = plugin.FFLogsService;
+        if (encounterIds is not { } ids)
+        {
+            // The duty has no FFLogs encounter, so each player's overall standing is shown instead.
+            foreach (var (index, result) in await service.GetOverallParsesAsync(members))
+            {
+                results[index] = result;
+            }
+
+            return;
+        }
+
+        var encounterResults = await service.GetEncounterDataAsync(members, ids);
+        var withoutData = new List<int>();
+        foreach (var (index, result) in encounterResults)
+        {
+            results[index] = result;
+            if (!result.CharacterNotFound
+                && result.TotalKills == 0
+                && result.LowestBossHpPct is null
+                && result.Phase1BestParse is null
+                && result.Phase2BestParse is null
+                && result.Phase1LowestBossHpPct is null
+                && result.Phase2LowestBossHpPct is null)
+            {
+                withoutData.Add(index);
+            }
+        }
+
+        // Players with nothing logged for the encounter get their overall average beside "No logs".
+        foreach (var (index, average) in await service.GetOverallAveragesAsync(members, withoutData))
+        {
+            if (average.HasValue)
+            {
+                results[index] = encounterResults[index] with { AverageParsePercent = average };
+            }
+        }
+    }
+
     private async Task FetchTomestoneAsync(PartyMemberInfo[] members, ConcurrentDictionary<int, TomestoneCharacterInfo?> results)
     {
         try
         {
             var dutyName = plugin.PartyFinderManager.LookupDutyName;
-            for (var i = 0; i < members.Length; i++)
+            var service = plugin.TomestoneService;
+            await Task.WhenAll(members.Select(async (member, i) =>
             {
-                results[i] = members[i].IsResolved
-                    ? await plugin.TomestoneService.GetCharacterInfoAsync(members[i].Name, members[i].World, dutyName)
-                    : null;
-            }
+                if (!member.IsResolved)
+                {
+                    results[i] = null;
+                    return;
+                }
+
+                var info = results[i] = await service.GetCharacterInfoAsync(member.Name, member.World, dutyName);
+                if (info is { NotFound: true } && await plugin.PartyFinderManager.RefreshMemberAsync(member) is { } renamed)
+                {
+                    results[i] = await service.GetCharacterInfoAsync(renamed.Name, renamed.World, dutyName);
+                }
+            }));
         }
         catch (Exception ex)
         {

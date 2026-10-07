@@ -1,7 +1,6 @@
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using PassportCheckerReborn.Services;
-using PassportCheckerReborn.UI;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -36,8 +35,6 @@ public partial class MainWindow : Window
     private const float RailWidth = 84f;
 
     private const double CopiedFeedbackSeconds = 1.5;
-
-    private static readonly string[] OverlayPositionNames = Enum.GetNames<PartyListOverlayPosition>();
 
     private static readonly M3Segment[] OverlaySideSegments =
     [
@@ -126,7 +123,7 @@ public partial class MainWindow : Window
     public override void PostDraw()
     {
         // Draw pops these as soon as Begin has them, but Draw is skipped when Begin returns false.
-        PopFoldStyle();
+        fold.PopStyle();
         theme?.Dispose();
         theme = null;
     }
@@ -141,22 +138,22 @@ public partial class MainWindow : Window
 
         M3Motion.Reset();
         M3CardHost.Reset();
-        RestoreOnClose();
+
+        // Closed while folded, the window next opens unfolded.
+        fold.Reset();
     }
 
     public override void Draw()
     {
-        PopFoldStyle();
-        windowPos = ImGui.GetWindowPos();
-        windowSize = ImGui.GetWindowSize();
+        fold.BeginDraw();
 
-        var folded = Folded;
+        var folded = fold.Amount;
         if (folded < 1f)
         {
             using var alpha = ImRaii.PushStyle(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * (1f - MathF.Min(1f, folded * 1.4f)));
-            DrawBackdrop(windowRounding);
+            DrawBackdrop(fold.Rounding);
 
-            var (openPos, openSize) = OpenRect();
+            var (openPos, openSize) = fold.OpenRect();
             DrawContent(openPos, openSize);
         }
 
@@ -173,8 +170,9 @@ public partial class MainWindow : Window
     // rather than the page reflowing to fit it.
     private void DrawContent(Vector2 openPos, Vector2 openSize)
     {
-        ImGui.SetCursorScreenPos(openPos + openPadding);
-        using var content = ImRaii.Child("##pcr_window_content", Vector2.Max(Vector2.One, openSize - (openPadding * 2f)), false,
+        var padding = fold.OpenPadding;
+        ImGui.SetCursorScreenPos(openPos + padding);
+        using var content = ImRaii.Child("##pcr_window_content", Vector2.Max(Vector2.One, openSize - (padding * 2f)), false,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoBackground);
         if (!content)
         {
@@ -262,7 +260,7 @@ public partial class MainWindow : Window
             new(nameof(Page.Tomestone), "Tomestone", FontAwesomeIcon.Gem, page == Page.Tomestone,
                 "Tomestone.gg integration and API key", Badge: tomestoneNeedsSetup ? "!" : null, SeparatorAfter: true),
             new(nameof(Page.Appearance), "Appearance", FontAwesomeIcon.Palette, page == Page.Appearance,
-                "Accent color, text and element size"),
+                "Accent color, size and spacing"),
             new(nameof(Page.About), "About", FontAwesomeIcon.InfoCircle, page == Page.About,
                 "Commands, caches and links"),
         ];
@@ -337,7 +335,7 @@ public partial class MainWindow : Window
 
         if (hovered)
         {
-            ImguiTooltips.ShowTooltip("About Passport Checker Reborn");
+            M3Tooltip.Show("About Passport Checker Reborn");
         }
 
         if (pressed)
@@ -451,7 +449,7 @@ public partial class MainWindow : Window
         ImGui.Dummy(new Vector2(fullWidth, height));
 
         shownActions = shown;
-        barTop = (height - barSize.Y) * 0.5f;
+        fold.BarTop = (height - barSize.Y) * 0.5f;
 
         var min = ImGui.GetItemRectMin();
         var max = ImGui.GetItemRectMax();
@@ -479,7 +477,7 @@ public partial class MainWindow : Window
         using (M3Card.Begin("general_details", "Listing details", FontAwesomeIcon.AddressCard))
         {
             var highlight = cfg.SpecialBorderColorForKnownPlayers;
-            if (SwitchRow("Highlight known players", "Tints known players' rows in the member info overlay.", ref highlight))
+            if (M3Widgets.RowSwitch("Highlight known players", ref highlight, "Tints known players' rows in the member info overlay."))
             {
                 cfg.SpecialBorderColorForKnownPlayers = highlight;
                 cfg.Save();
@@ -489,7 +487,7 @@ public partial class MainWindow : Window
             {
                 using var group = M3SubGroup.Begin();
                 var color = cfg.KnownPlayerBorderColor;
-                if (ColorRow("Highlight color", "##known_player_color", ref color))
+                if (M3Widgets.RowColor("Highlight color", ref color, Configuration.DefaultKnownPlayerBorderColor, alpha: false))
                 {
                     cfg.KnownPlayerBorderColor = color;
                     savePending = true;
@@ -497,17 +495,17 @@ public partial class MainWindow : Window
             }
 
             var jobIcons = cfg.ShowPartyJobIcons;
-            if (SwitchRow("Show job icons", "Shows each player's job icon in the member info and party list overlays.", ref jobIcons))
+            if (M3Widgets.RowSwitch("Show job icons", ref jobIcons, "Shows each player's job icon in the member info and party list overlays."))
             {
                 cfg.ShowPartyJobIcons = jobIcons;
                 cfg.Save();
             }
 
             var keepOpen = cfg.PreventAutoClosingOnPartyChanges2;
-            if (SwitchRow("Keep the listing open when your party changes",
+            if (M3Widgets.RowSwitch("Keep the listing open when your party changes", ref keepOpen,
                     WhenAvailable("Stops the Party Finder closing itself when your party changes, and reloads the listing you were viewing.",
                         PFWindowManager.Unavailable),
-                    ref keepOpen, enabled: !PFWindowManager.Unavailable))
+                    enabled: !PFWindowManager.Unavailable))
             {
                 cfg.PreventAutoClosingOnPartyChanges2 = keepOpen;
                 cfg.Save();
@@ -520,10 +518,10 @@ public partial class MainWindow : Window
             var tweaks = plugin.PartyFinderListTweaks;
 
             var sorting = cfg.EnableTrueTimeBasedSorting;
-            if (SwitchRow("True time-based sorting",
+            if (M3Widgets.RowSwitch("True time-based sorting", ref sorting,
                     WhenAvailable("Orders each page by the time listings have left, instead of grouping them by duty.",
                         tweaks.SortingUnavailable),
-                    ref sorting, enabled: !tweaks.SortingUnavailable))
+                    enabled: !tweaks.SortingUnavailable))
             {
                 cfg.EnableTrueTimeBasedSorting = sorting;
                 cfg.Save();
@@ -545,9 +543,9 @@ public partial class MainWindow : Window
             }
 
             var expand = cfg.ExpandListingsTo100PerPage;
-            if (SwitchRow("Show 100 listings per page",
+            if (M3Widgets.RowSwitch("Show 100 listings per page", ref expand,
                     WhenAvailable("Asks the server for 100 listings at a time instead of 50.", tweaks.PageSizeUnavailable),
-                    ref expand, enabled: !tweaks.PageSizeUnavailable))
+                    enabled: !tweaks.PageSizeUnavailable))
             {
                 cfg.ExpandListingsTo100PerPage = expand;
                 cfg.Save();
@@ -556,7 +554,7 @@ public partial class MainWindow : Window
             }
 
             var autoRefresh = cfg.EnableAutomaticRefresh;
-            if (SwitchRow("Refresh listings automatically", "Reloads the Party Finder list on a timer while you're browsing it.", ref autoRefresh))
+            if (M3Widgets.RowSwitch("Refresh listings automatically", ref autoRefresh, "Reloads the Party Finder list on a timer while you're browsing it."))
             {
                 cfg.EnableAutomaticRefresh = autoRefresh;
                 cfg.Save();
@@ -565,18 +563,17 @@ public partial class MainWindow : Window
             if (cfg.EnableAutomaticRefresh)
             {
                 using var group = M3SubGroup.Begin();
-                var interval = cfg.AutoRefreshIntervalSeconds;
-                if (SliderRow("Refresh interval", ref interval, 10, 120, " s"))
+                var interval = (float)cfg.AutoRefreshIntervalSeconds;
+                if (M3Widgets.RowDragFloat("Refresh interval", ref interval, 10f, 120f, "%.0f s"))
                 {
-                    cfg.AutoRefreshIntervalSeconds = interval;
+                    cfg.AutoRefreshIntervalSeconds = (int)MathF.Round(interval);
                     savePending = true;
                 }
             }
 
             var jobFilter = cfg.EnableOneClickJobFilter;
-            if (SwitchRow("One-click job filter button",
-                    "Adds a button above the Party Finder that hides high-end duty listings with no open slot for your current job.",
-                    ref jobFilter))
+            if (M3Widgets.RowSwitch("One-click job filter button", ref jobFilter,
+                    "Adds a button above the Party Finder that hides high-end duty listings with no open slot for your current job."))
             {
                 cfg.EnableOneClickJobFilter = jobFilter;
                 cfg.Save();
@@ -589,9 +586,8 @@ public partial class MainWindow : Window
             }
 
             var rightClick = cfg.RightClickPlayerNameForRecruitment3;
-            if (SwitchRow("Right-click a name to view their recruitment",
-                    "Adds View Recruitment to a player's context menu, which opens their Party Finder listing.",
-                    ref rightClick))
+            if (M3Widgets.RowSwitch("Right-click a name to view their recruitment", ref rightClick,
+                    "Adds View Recruitment to a player's context menu, which opens their Party Finder listing."))
             {
                 cfg.RightClickPlayerNameForRecruitment3 = rightClick;
                 cfg.Save();
@@ -602,7 +598,7 @@ public partial class MainWindow : Window
         using (M3Card.Begin("general_blacklist", "Blacklist", FontAwesomeIcon.UserSlash))
         {
             var blacklist = cfg.EnableBlacklistFeature;
-            if (SwitchRow("Flag blacklisted players", "Marks players on your in-game blacklist with a BL tag in the member info overlay.", ref blacklist))
+            if (M3Widgets.RowSwitch("Flag blacklisted players", ref blacklist, "Marks players on your in-game blacklist with a BL tag in the member info overlay."))
             {
                 cfg.EnableBlacklistFeature = blacklist;
                 cfg.Save();
@@ -624,7 +620,7 @@ public partial class MainWindow : Window
                    subtitle: "Appears beside a Party Finder listing's details."))
         {
             var show = cfg.ShowMemberInfoOverlay;
-            if (SwitchRow("Show member info overlay", null, ref show))
+            if (M3Widgets.RowSwitch("Show member info overlay", ref show))
             {
                 cfg.ShowMemberInfoOverlay = show;
                 cfg.Save();
@@ -635,7 +631,7 @@ public partial class MainWindow : Window
                 using var group = M3SubGroup.Begin();
 
                 var highEnd = cfg.OnlyShowOverlayForHighEndDuties;
-                if (SwitchRow("High-end duties only", "Hides the overlay for listings that aren't high-end duties.", ref highEnd))
+                if (M3Widgets.RowSwitch("High-end duties only", ref highEnd, "Hides the overlay for listings that aren't high-end duties."))
                 {
                     cfg.OnlyShowOverlayForHighEndDuties = highEnd;
                     cfg.Save();
@@ -650,8 +646,8 @@ public partial class MainWindow : Window
                 }
 
                 var resolvedNames = cfg.ShowResolvedPlayerNames;
-                if (SwitchRow("Show resolved player names",
-                        "Shows Name@World once a player is resolved, instead of \"Player 1\".", ref resolvedNames))
+                if (M3Widgets.RowSwitch("Show resolved player names", ref resolvedNames,
+                        "Shows Name@World once a player is resolved, instead of \"Player 1\"."))
                 {
                     cfg.ShowResolvedPlayerNames = resolvedNames;
                     cfg.Save();
@@ -671,7 +667,7 @@ public partial class MainWindow : Window
                    subtitle: "FFLogs and Tomestone data for your current party, next to the party list. Includes a duty picker for encounter-specific lookups."))
         {
             var show = cfg.ShowPartyListOverlay;
-            if (SwitchRow("Show party list overlay", "You can also toggle it with /pcrparty.", ref show))
+            if (M3Widgets.RowSwitch("Show party list overlay", ref show, "You can also toggle it with /pcrparty."))
             {
                 cfg.ShowPartyListOverlay = show;
                 cfg.Save();
@@ -681,23 +677,23 @@ public partial class MainWindow : Window
             {
                 using var group = M3SubGroup.Begin();
 
-                var position = (int)cfg.PartyListOverlayPosition;
-                if (ComboRow("Position", "Where the overlay sits relative to the party list. Unbound lets you drag it anywhere.",
-                        "##party_list_position", ref position, OverlayPositionNames, 150f * M3.Scale))
+                var position = cfg.PartyListOverlayPosition;
+                if (M3Widgets.RowCombo("Position", ref position,
+                        "Where the overlay sits relative to the party list. Unbound lets you drag it anywhere."))
                 {
-                    cfg.PartyListOverlayPosition = (PartyListOverlayPosition)position;
+                    cfg.PartyListOverlayPosition = position;
                     cfg.Save();
                 }
 
                 var hideInDuty = cfg.HidePartyListInDuty;
-                if (SwitchRow("Hide in duties", null, ref hideInDuty))
+                if (M3Widgets.RowSwitch("Hide in duties", ref hideInDuty))
                 {
                     cfg.HidePartyListInDuty = hideInDuty;
                     cfg.Save();
                 }
 
                 var hideInCombat = cfg.HidePartyListInCombat;
-                if (SwitchRow("Hide in combat", null, ref hideInCombat))
+                if (M3Widgets.RowSwitch("Hide in combat", ref hideInCombat))
                 {
                     cfg.HidePartyListInCombat = hideInCombat;
                     cfg.Save();
@@ -721,8 +717,8 @@ public partial class MainWindow : Window
         using (M3Card.Begin("fflogs_integration", "Integration", FontAwesomeIcon.ChartBar))
         {
             var enabled = cfg.EnableFFLogsIntegrationOverlay;
-            if (SwitchRow("Show FFLogs data in overlays",
-                    "Adds an FFLogs column with clears and parses to the member info and party list overlays.", ref enabled))
+            if (M3Widgets.RowSwitch("Show FFLogs data in overlays", ref enabled,
+                    "Adds an FFLogs column with clears and parses to the member info and party list overlays."))
             {
                 cfg.EnableFFLogsIntegrationOverlay = enabled;
                 cfg.Save();
@@ -830,9 +826,8 @@ public partial class MainWindow : Window
         using (M3Card.Begin("tomestone_integration", "Integration", FontAwesomeIcon.Gem))
         {
             var enabled = cfg.EnableTomestoneIntegration;
-            if (SwitchRow("Show Tomestone data in overlays",
-                    "Adds a Tomestone column with prog points and clears. In the member info overlay, click Tomestone to look up the listing's duty.",
-                    ref enabled))
+            if (M3Widgets.RowSwitch("Show Tomestone data in overlays", ref enabled,
+                    "Adds a Tomestone column with prog points and clears. In the member info overlay, click Tomestone to look up the listing's duty."))
             {
                 cfg.EnableTomestoneIntegration = enabled;
                 cfg.Save();
@@ -881,34 +876,17 @@ public partial class MainWindow : Window
     private void DrawAppearancePage()
     {
         var cfg = Configuration;
-        var scale = M3.Scale;
 
         using (M3Card.Begin("appearance_theme", "Theme", FontAwesomeIcon.Palette,
                    subtitle: "Every color in the plugin's windows is generated from one accent color."))
         {
-            var swatch = 28f * scale;
-            var reset = M3Widgets.IconButtonSize;
-            var controlSize = new Vector2(swatch + M3.Space2 + reset, MathF.Max(swatch, reset));
-
-            var row = M3SettingRow.Begin("Accent color", "Very dark or grey colors fall back to the default.", controlSize);
-            var origin = row.ControlPosition;
-
-            ImGui.SetCursorScreenPos(origin + new Vector2(0f, (controlSize.Y - swatch) * 0.5f));
             var accent = cfg.UiAccentColor;
-            if (M3Widgets.ColorSwatch("##accent_color", ref accent))
+            if (M3Widgets.RowColor("Accent color", ref accent, M3.DefaultSeed,
+                    "Very dark or grey colors fall back to the default.", alpha: false))
             {
                 cfg.UiAccentColor = accent with { W = 1f };
                 savePending = true;
             }
-
-            ImGui.SetCursorScreenPos(origin + new Vector2(swatch + M3.Space2, (controlSize.Y - reset) * 0.5f));
-            if (M3Widgets.IconButton("##accent_reset", FontAwesomeIcon.Undo, "Reset to the default accent"))
-            {
-                cfg.UiAccentColor = M3.DefaultSeed;
-                cfg.Save();
-            }
-
-            M3SettingRow.End(row);
 
             DrawAccentPresets();
         }
@@ -916,19 +894,27 @@ public partial class MainWindow : Window
         using (M3Card.Begin("appearance_size", "Size", FontAwesomeIcon.TextHeight,
                    subtitle: "Applies to every window of the plugin, on top of Dalamud's global scale."))
         {
-            var textPercent = (int)MathF.Round(cfg.UiTextScale * 100f);
-            if (SliderRow("Text size", ref textPercent, 75, 175, "%",
+            var textPercent = cfg.UiTextScale * 100f;
+            if (M3Widgets.RowDragFloat("Text size", ref textPercent, 75f, 175f, "%.0f%%",
                     "Scales the text, on top of Dalamud's own font settings."))
             {
-                cfg.UiTextScale = textPercent / 100f;
+                cfg.UiTextScale = MathF.Round(textPercent) / 100f;
                 savePending = true;
             }
 
-            var elementPercent = (int)MathF.Round(cfg.UiElementScale * 100f);
-            if (SliderRow("Element size", ref elementPercent, 75, 175, "%",
+            var elementPercent = cfg.UiElementScale * 100f;
+            if (M3Widgets.RowDragFloat("Element size", ref elementPercent, 75f, 175f, "%.0f%%",
                     "Scales the padding, spacing and controls. Turn it down for a more compact layout."))
             {
-                cfg.UiElementScale = elementPercent / 100f;
+                cfg.UiElementScale = MathF.Round(elementPercent) / 100f;
+                savePending = true;
+            }
+
+            var paddingPercent = cfg.UiPaddingScale * 100f;
+            if (M3Widgets.RowDragFloat("Spacing", ref paddingPercent, 50f, 200f, "%.0f%%",
+                    "Scales only the space around and between things, leaving the controls their size."))
+            {
+                cfg.UiPaddingScale = MathF.Round(paddingPercent) / 100f;
                 savePending = true;
             }
         }
@@ -968,7 +954,7 @@ public partial class MainWindow : Window
             if (hovered)
             {
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-                ImguiTooltips.ShowTooltip(name);
+                M3Tooltip.Show(name);
             }
 
             if (pressed)
@@ -1069,36 +1055,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool SwitchRow(string label, string? supporting, ref bool value, bool enabled = true)
-    {
-        var row = M3SettingRow.Begin(label, supporting, M3Widgets.SwitchSize(), disabled: !enabled);
-        ImGui.SetCursorScreenPos(row.ControlPosition);
-        var changed = M3Widgets.Switch($"##{label}_switch", ref value, enabled);
-        M3SettingRow.End(row);
-        return changed;
-    }
-
-    private static bool SliderRow(string label, ref int value, int min, int max, string suffix, string? supporting = null)
-    {
-        var trackWidth = 150f * M3.Scale;
-        var controlSize = new Vector2(trackWidth + M3Widgets.SliderValueGutter($"{max}{suffix}"), M3Widgets.ButtonHeight);
-
-        var row = M3SettingRow.Begin(label, supporting, controlSize);
-        ImGui.SetCursorScreenPos(row.ControlPosition);
-        var changed = M3Widgets.SliderInt($"##{label}_slider", ref value, min, max, $"{value}{suffix}", trackWidth);
-        M3SettingRow.End(row);
-        return changed;
-    }
-
-    private static bool ComboRow(string label, string? supporting, string id, ref int index, IReadOnlyList<string> items, float width)
-    {
-        var row = M3SettingRow.Begin(label, supporting, new Vector2(width, M3Widgets.ComboHeight));
-        ImGui.SetCursorScreenPos(row.ControlPosition);
-        var changed = M3Widgets.Combo(id, ref index, items, width);
-        M3SettingRow.End(row);
-        return changed;
-    }
-
     // Returns the index picked this frame, or -1 when the selection did not change.
     private static int SegmentedRow(string label, string? supporting, string id, M3Segment[] segments, int selectedIndex)
     {
@@ -1108,16 +1064,6 @@ public partial class MainWindow : Window
         var picked = M3Widgets.SegmentedButtons(id, segments, selectedIndex, width);
         M3SettingRow.End(row);
         return picked;
-    }
-
-    private static bool ColorRow(string label, string id, ref Vector4 color)
-    {
-        var diameter = 28f * M3.Scale;
-        var row = M3SettingRow.Begin(label, null, new Vector2(diameter, diameter));
-        ImGui.SetCursorScreenPos(row.ControlPosition);
-        var changed = M3Widgets.ColorSwatch(id, ref color);
-        M3SettingRow.End(row);
-        return changed;
     }
 
     private static bool ButtonRow(string label, string? supporting, string id, string buttonLabel, FontAwesomeIcon icon)

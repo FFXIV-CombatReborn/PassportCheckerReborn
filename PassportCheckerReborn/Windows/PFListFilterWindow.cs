@@ -1,6 +1,5 @@
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using PassportCheckerReborn.UI;
 using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
@@ -49,7 +48,7 @@ public class PFListFilterWindow(PassportCheckerReborn plugin) : Window("PF Job F
 
     public override void PreDraw()
     {
-        theme = M3Style.Push(compact: true);
+        theme = M3Style.Push(M3Density.Compact);
 
         // Above the Party Finder's top-left corner, or below its bottom-left one when there is no room above.
         var gap = AddonGap * M3.Scale;

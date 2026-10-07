@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -13,6 +15,7 @@ namespace PassportCheckerReborn.Services;
 public sealed partial class TomestoneService : IDisposable
 {
     private const string ApiBaseUrl = "https://tomestone.gg/api";
+    private const int MaxConcurrentRequests = 4;
 
     private static readonly string[] EncounterCategories = ["savage", "ultimate", "extremes", "criterion", "chaotic", "quantum"];
 
@@ -68,15 +71,18 @@ public sealed partial class TomestoneService : IDisposable
                 new("dawntrail", "aac-heavyweight-savage", "lindwurm")),
         };
 
+    // The activity endpoint has answered in several shapes; each is tried in turn.
+    private static readonly string[][] ActivityArrayPaths = [["results"], ["data"], ["data", "paginator", "data"]];
+
     private readonly PassportCheckerReborn plugin;
-    private readonly HttpClient httpClient;
+    private readonly ApiHttpClient http = new(MaxConcurrentRequests);
+    private readonly ExpiringCache<(string World, string Name, string Duty), TomestoneCharacterInfo> results = new(TimeSpan.FromMinutes(5));
+    private readonly ConcurrentDictionary<(string World, string Name, string Duty), Task<TomestoneCharacterInfo>> inFlight = new();
 
     public TomestoneService(PassportCheckerReborn plugin)
     {
         this.plugin = plugin;
-        httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"PassportCheckerReborn/{PassportCheckerReborn.Version}");
-        httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
     // The phase entries of a multi-part duty are listed; its combined name is not.
@@ -87,7 +93,7 @@ public sealed partial class TomestoneService : IDisposable
 
     public void Dispose()
     {
-        httpClient.Dispose();
+        http.Dispose();
     }
 
     public async Task<TomestoneCharacterInfo?> GetCharacterInfoAsync(string playerName, string world, string? dutyName = null)
@@ -97,34 +103,76 @@ public sealed partial class TomestoneService : IDisposable
             return null;
         }
 
-        TomestoneEncounterParams? encounter = null;
-        TomestoneEncounterParams? fallback = null;
-        if (!string.IsNullOrWhiteSpace(dutyName)
-            && !Encounters.TryGetValue(dutyName, out encounter)
-            && MultiPartEncounters.TryGetValue(dutyName, out var parts))
+        // Every endpoint answers per encounter, so without a duty there is nothing to ask for.
+        if (string.IsNullOrWhiteSpace(dutyName))
         {
-            encounter = parts.Preferred;
-            fallback = parts.Fallback;
+            return new TomestoneCharacterInfo();
+        }
+
+        var key = (world, playerName, dutyName);
+        if (results.TryGet(key, out var cached))
+        {
+            return cached;
+        }
+
+        // Overlapping lookups of one player share the requests.
+        var lookup = inFlight.GetOrAdd(key, _ => LookUpAsync(playerName, world, dutyName));
+        try
+        {
+            return await lookup;
+        }
+        finally
+        {
+            inFlight.TryRemove(KeyValuePair.Create(key, lookup));
+        }
+    }
+
+    private async Task<TomestoneCharacterInfo> LookUpAsync(string playerName, string world, string dutyName)
+    {
+        TomestoneEncounterParams? fallback = null;
+        if (!Encounters.TryGetValue(dutyName, out var encounter) && MultiPartEncounters.TryGetValue(dutyName, out var parts))
+        {
+            (encounter, fallback) = parts;
         }
 
         var info = new TomestoneCharacterInfo();
         var server = Uri.EscapeDataString(world);
         var name = Uri.EscapeDataString(playerName);
 
-        await FetchAsync(info, $"{ApiBaseUrl}/character/profile/{server}/{name}", root =>
+        // The profile lists every encounter. When it has nothing for the duty, the per-encounter endpoints
+        // are asked, unless the profile is unknown, empty, or the player hides their activity.
+        var outcome = await FetchAsync(info, $"{ApiBaseUrl}/character/profile/{server}/{name}", root =>
         {
-            if (root.TryGetProperty("lodestoneId", out var id)
-                || root.TryGetProperty("lodestone_id", out id)
-                || root.TryGetProperty("id", out id))
+            ParseProfileEncounters(info, root, dutyName, encounter);
+            if (fallback != null && !HasEncounterData(info))
             {
-                info.CharacterId = id.ValueKind == JsonValueKind.Number ? id.GetInt64().ToString() : id.GetString();
+                ParseProfileEncounters(info, root, dutyName, fallback);
             }
         });
 
-        await FetchEncounterAsync(info, server, name, dutyName, encounter);
-        if (fallback != null && !HasEncounterData(info))
+        info.NotFound = outcome == FetchOutcome.NotFound;
+        var complete = outcome != FetchOutcome.Failed;
+        if (outcome == FetchOutcome.Answered && !info.NoLogs)
         {
-            await FetchEncounterAsync(info, server, name, dutyName, fallback);
+            foreach (var part in new[] { encounter, fallback })
+            {
+                if (part != null && !info.ActivityHidden && !HasEncounterData(info))
+                {
+                    complete &= await FetchEncounterEndpointsAsync(info, server, name, part);
+                }
+            }
+        }
+
+        // An empty answer from one endpoint does not outweigh data from another.
+        if (HasEncounterData(info) || info.BestPercent.HasValue)
+        {
+            info.NoLogs = false;
+        }
+
+        info.LookupFailed = !complete;
+        if (complete)
+        {
+            results.Set((world, playerName, dutyName), info);
         }
 
         return info;
@@ -135,69 +183,84 @@ public sealed partial class TomestoneService : IDisposable
         return info.ProgPoint != null || info.TotalClears.HasValue;
     }
 
-    // The profile by Lodestone ID covers every encounter in one call. The per-encounter endpoints are
-    // older, and only asked when it came back without the duty.
-    private async Task FetchEncounterAsync(
-        TomestoneCharacterInfo info, string server, string name, string? dutyName, TomestoneEncounterParams? encounter)
+    // The older per-encounter endpoints, for when the profile came back without the duty.
+    private async Task<bool> FetchEncounterEndpointsAsync(TomestoneCharacterInfo info, string server, string name, TomestoneEncounterParams encounter)
     {
-        if (encounter == null && string.IsNullOrWhiteSpace(dutyName))
-        {
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(info.CharacterId))
-        {
-            await FetchAsync(info, $"{ApiBaseUrl}/character/profile/{info.CharacterId}?update=false",
-                root => ParseProfileEncounters(info, root, dutyName, encounter));
-        }
-
-        if (encounter == null || HasEncounterData(info))
-        {
-            return;
-        }
-
         var query = $"{server}/{name}"
             + $"?expansion={Uri.EscapeDataString(encounter.Expansion)}"
             + $"&zone={Uri.EscapeDataString(encounter.Zone)}"
             + $"&encounter={Uri.EscapeDataString(encounter.Encounter)}";
 
-        await FetchAsync(info, $"{ApiBaseUrl}/character/progression-graph/{query}", root => info.ProgPoint = ParseProgPointFromGraph(root));
-        await FetchAsync(info, $"{ApiBaseUrl}/character/activity/{query}", root => ParseActivityResponse(info, root));
+        var outcomes = await Task.WhenAll(
+            FetchAsync(info, $"{ApiBaseUrl}/character/progression-graph/{query}", root => info.ProgPoint = ParseProgPointFromGraph(root)),
+            FetchAsync(info, $"{ApiBaseUrl}/character/activity/{query}", root => ParseActivityResponse(info, root)));
+        return Array.TrueForAll(outcomes, outcome => outcome != FetchOutcome.Failed);
     }
 
-    // Requests a URL and hands the JSON to parse. A failed request or a parse error leaves info as it was.
-    private async Task FetchAsync(TomestoneCharacterInfo info, string url, Action<JsonElement> parse)
+    // A failed request is not cached; a 404 is an answer, not a failure.
+    private async Task<FetchOutcome> FetchAsync(TomestoneCharacterInfo info, string url, Action<JsonElement> parse)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            var apiKey = plugin.Configuration.TomestoneApiKey;
-            if (!string.IsNullOrWhiteSpace(apiKey))
+            using var response = await http.SendAsync(() => CreateRequest(url));
+            if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                return FetchOutcome.NotFound;
             }
 
-            using var response = await httpClient.SendAsync(request);
+            // A public profile can still hide its activity: {"error":"Character activity is hidden."}
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                using var error = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+                if (error.RootElement.GetStringOrNull("error")?.Contains("hidden", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    info.ActivityHidden = true;
+                    return FetchOutcome.Answered;
+                }
+            }
+
             if (!response.IsSuccessStatusCode)
             {
-                return;
+                PassportCheckerReborn.Log.Debug($"[TomestoneService] {(int)response.StatusCode} from {url}");
+                return FetchOutcome.Failed;
             }
 
-            // A hidden profile is answered with an empty array.
-            var json = await response.Content.ReadAsStringAsync();
-            if (json.Trim() == "[]")
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() == 0)
             {
                 info.NoLogs = true;
-                return;
+            }
+            else
+            {
+                parse(doc.RootElement);
             }
 
-            using var doc = JsonDocument.Parse(json);
-            parse(doc.RootElement);
+            return FetchOutcome.Answered;
         }
         catch (Exception ex)
         {
             PassportCheckerReborn.Log.Debug(ex, $"[TomestoneService] Request failed: {url}");
+            return FetchOutcome.Failed;
         }
+    }
+
+    private enum FetchOutcome
+    {
+        Failed,
+        NotFound,
+        Answered,
+    }
+
+    private HttpRequestMessage CreateRequest(string url)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var apiKey = plugin.Configuration.TomestoneApiKey;
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        }
+
+        return request;
     }
 
     #region Response parsing
@@ -205,30 +268,23 @@ public sealed partial class TomestoneService : IDisposable
     // The furthest mechanic reached, from a graph of { duration, mechanic: { name, number } } points.
     private static string? ParseProgPointFromGraph(JsonElement root)
     {
-        if (!((root.TryGetProperty("data", out var data) && data.TryGetProperty("graph", out var graph))
-              || root.TryGetProperty("graph", out graph))
+        if (!(root.TryGetPath(out var graph, "data", "graph") || root.TryGetPath(out graph, "graph"))
             || graph.ValueKind != JsonValueKind.Array)
         {
             return ParseDirectProgPoint(root);
         }
 
-        var longest = 0;
+        var longest = 0.0;
         string? mechanic = null;
         foreach (var point in graph.EnumerateArray())
         {
-            if (!point.TryGetProperty("duration", out var durationEl))
-            {
-                continue;
-            }
-
-            var duration = durationEl.GetInt32();
-            if (duration <= longest)
+            if (point.GetNumberOrNull("duration") is not { } duration || duration <= longest)
             {
                 continue;
             }
 
             longest = duration;
-            if (point.TryGetProperty("mechanic", out var mechanicEl))
+            if (point.TryGetPath(out var mechanicEl, "mechanic"))
             {
                 mechanic = FormatMechanic(mechanicEl) ?? mechanic;
             }
@@ -239,38 +295,27 @@ public sealed partial class TomestoneService : IDisposable
 
     private static string? ParseDirectProgPoint(JsonElement root)
     {
-        if (root.TryGetProperty("percent", out var percent) || root.TryGetProperty("bestPercent", out percent))
+        if (root.TryGetPath(out var percent, "percent") || root.TryGetPath(out percent, "bestPercent"))
         {
             return percent.ToString();
         }
 
-        if (root.TryGetProperty("progPoint", out var progPoint) || root.TryGetProperty("prog_point", out progPoint))
-        {
-            return progPoint.GetString();
-        }
-
-        return null;
+        return root.GetStringOrNull("progPoint") ?? root.GetStringOrNull("prog_point");
     }
 
     // "Splattershed", or "Splattershed #2" for a mechanic that comes round more than once.
     private static string? FormatMechanic(JsonElement mechanic)
     {
-        if (mechanic.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var name = mechanic.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
+        var name = mechanic.GetStringOrNull("name");
         if (string.IsNullOrWhiteSpace(name))
         {
             return null;
         }
 
-        var number = mechanic.TryGetProperty("number", out var numberEl) && numberEl.TryGetInt32(out var value) ? value : 0;
+        var number = (int)(mechanic.GetNumberOrNull("number") ?? 0);
         return number > 1 ? $"{name} #{number}" : name;
     }
 
-    // The activity endpoint has answered in several shapes; each is tried in turn.
     private static void ParseActivityResponse(TomestoneCharacterInfo info, JsonElement root)
     {
         if (root.ValueKind == JsonValueKind.Array)
@@ -279,37 +324,21 @@ public sealed partial class TomestoneService : IDisposable
             return;
         }
 
-        if (root.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
+        foreach (var path in ActivityArrayPaths)
         {
-            ParseActivityArray(info, results);
-            return;
-        }
-
-        if (root.TryGetProperty("data", out var data))
-        {
-            if (data.ValueKind == JsonValueKind.Array)
+            if (root.TryGetPath(out var array, path) && array.ValueKind == JsonValueKind.Array)
             {
-                ParseActivityArray(info, data);
-                return;
-            }
-
-            if (data.ValueKind == JsonValueKind.Object
-                && data.TryGetProperty("paginator", out var paginator)
-                && paginator.TryGetProperty("data", out var page)
-                && page.ValueKind == JsonValueKind.Array)
-            {
-                ParseActivityArray(info, page);
+                ParseActivityArray(info, array);
                 return;
             }
         }
 
-        if ((root.TryGetProperty("clears", out var clears) || root.TryGetProperty("killsCount", out clears))
-            && clears.TryGetInt32(out var count))
+        if ((root.GetNumberOrNull("clears") ?? root.GetNumberOrNull("killsCount")) is { } clears)
         {
-            info.TotalClears = count;
+            info.TotalClears = (int)clears;
         }
 
-        if (root.TryGetProperty("bestPercent", out var best) && best.TryGetDouble(out var bestPercent))
+        if (root.GetNumberOrNull("bestPercent") is { } bestPercent)
         {
             info.BestPercent = bestPercent;
         }
@@ -322,14 +351,14 @@ public sealed partial class TomestoneService : IDisposable
 
         foreach (var entry in array.EnumerateArray())
         {
-            var activity = entry.TryGetProperty("activity", out var nested) ? nested : entry;
+            var activity = entry.TryGetPath(out var nested, "activity") ? nested : entry;
 
-            if (activity.TryGetProperty("killsCount", out var killsEl) && killsEl.TryGetInt32(out var kills) && kills > 0)
+            if (activity.GetNumberOrNull("killsCount") is { } kills and > 0)
             {
-                totalKills += kills;
+                totalKills += (int)kills;
             }
 
-            if (activity.TryGetProperty("bestPercent", out var bestEl)
+            if (activity.TryGetPath(out var bestEl, "bestPercent")
                 && ReadPercent(bestEl) is { } percent
                 && (bestPercent is null || percent > bestPercent))
             {
@@ -362,28 +391,23 @@ public sealed partial class TomestoneService : IDisposable
 
     // Savage and ultimate categories group their encounters; the others list them flat.
     private static void ParseProfileEncounters(
-        TomestoneCharacterInfo info, JsonElement root, string? dutyName, TomestoneEncounterParams? encounter)
+        TomestoneCharacterInfo info, JsonElement root, string dutyName, TomestoneEncounterParams? encounter)
     {
-        if (!root.TryGetProperty("encounters", out var encounters) || encounters.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetPath(out var encounters, "encounters"))
         {
             return;
         }
 
         foreach (var category in EncounterCategories)
         {
-            if (!encounters.TryGetProperty(category, out var groups) || groups.ValueKind != JsonValueKind.Array)
+            if (!encounters.TryGetPath(out var groups, category) || groups.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
             foreach (var group in groups.EnumerateArray())
             {
-                if (group.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                if (!group.TryGetProperty("encounters", out var nested) || nested.ValueKind != JsonValueKind.Array)
+                if (!group.TryGetPath(out var nested, "encounters") || nested.ValueKind != JsonValueKind.Array)
                 {
                     if (MatchesEncounter(group, dutyName, encounter))
                     {
@@ -406,54 +430,55 @@ public sealed partial class TomestoneService : IDisposable
         }
     }
 
-    private static bool MatchesEncounter(JsonElement candidate, string? dutyName, TomestoneEncounterParams? encounter)
+    private static bool MatchesEncounter(JsonElement candidate, string dutyName, TomestoneEncounterParams? encounter)
     {
-        var zoneName = candidate.TryGetProperty("zoneName", out var zoneEl) ? zoneEl.GetString() : null;
+        var zoneName = candidate.GetStringOrNull("zoneName");
         if (encounter == null)
         {
-            return !string.IsNullOrWhiteSpace(dutyName) && string.Equals(zoneName, dutyName, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(zoneName, dutyName, StringComparison.OrdinalIgnoreCase);
         }
 
         // The slug is that of the zone name for ultimates, and of the boss name for everything else.
-        var name = candidate.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
         return string.Equals(Slugify(zoneName), encounter.Encounter, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Slugify(name), encounter.Encounter, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(Slugify(candidate.GetStringOrNull("name")), encounter.Encounter, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ExtractEncounterData(TomestoneCharacterInfo info, JsonElement encounter)
     {
-        // The profile only gives timestamps for a cleared encounter, not a kill count.
-        if (encounter.TryGetProperty("activity", out var activity) && activity.ValueKind == JsonValueKind.Object)
+        // The profile only gives a cleared encounter's week, not a kill count. Hidden activity leaves out
+        // the logged clear, but the achievement stays public.
+        if ((encounter.TryGetPath(out var clear, "activity") || encounter.TryGetPath(out clear, "achievement"))
+            && clear.ValueKind == JsonValueKind.Object)
         {
             info.TotalClears = 1;
 
-            var week = activity.TryGetProperty("completionWeek", out var weekEl) ? weekEl.GetString() : null;
+            var week = clear.GetStringOrNull("completionWeek");
             if (!string.IsNullOrWhiteSpace(week))
             {
                 info.CompletionWeek = week;
             }
         }
 
-        if (!encounter.TryGetProperty("progression", out var progression) || progression.ValueKind != JsonValueKind.Object)
+        if (!encounter.TryGetPath(out var progression, "progression"))
         {
             return;
         }
 
-        if (progression.TryGetProperty("mechanic", out var mechanicEl) && FormatMechanic(mechanicEl) is { } mechanic)
+        if (progression.TryGetPath(out var mechanicEl, "mechanic") && FormatMechanic(mechanicEl) is { } mechanic)
         {
             info.ProgPoint = mechanic;
         }
 
         // Already formatted by the API, such as "35.82%".
-        var display = progression.TryGetProperty("displayPercent", out var displayEl) ? displayEl.GetString() : null;
+        var display = progression.GetStringOrNull("displayPercent");
         if (!string.IsNullOrWhiteSpace(display))
         {
             info.DisplayPercent = display;
         }
 
-        if (string.IsNullOrWhiteSpace(info.ProgPoint) && progression.TryGetProperty("percent", out var percent))
+        if (string.IsNullOrWhiteSpace(info.ProgPoint) && progression.TryGetPath(out var percent, "percent"))
         {
-            info.ProgPoint = percent.GetString();
+            info.ProgPoint = percent.ToString();
         }
     }
 
@@ -476,12 +501,19 @@ public record TomestoneEncounterParams(string Expansion, string Zone, string Enc
 
 public class TomestoneCharacterInfo
 {
-    // The Lodestone ID.
-    public string? CharacterId { get; set; }
     public string? ProgPoint { get; set; }
     public string? DisplayPercent { get; set; }
     public int? TotalClears { get; set; }
     public string? CompletionWeek { get; set; }
     public double? BestPercent { get; set; }
     public bool NoLogs { get; set; }
+
+    // Tomestone has no page for this name and world.
+    public bool NotFound { get; set; }
+
+    // The profile is public but its prog and logs are not.
+    public bool ActivityHidden { get; set; }
+
+    // A request failed, so missing data may only be missing from this lookup.
+    public bool LookupFailed { get; set; }
 }

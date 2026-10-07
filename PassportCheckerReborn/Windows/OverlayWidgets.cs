@@ -3,7 +3,6 @@ using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Utility;
 using PassportCheckerReborn.Services;
-using PassportCheckerReborn.UI;
 using System;
 using System.Numerics;
 
@@ -154,7 +153,7 @@ internal static class OverlayWidgets
                 new Vector2(max.X, max.Y - (1f * scale)),
                 M3.U32(tone, 0.8f), 1f * scale);
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-            ImguiTooltips.ShowTooltip("Open on Tomestone.gg");
+            M3Tooltip.Show("Open on Tomestone.gg");
         }
 
         if (ImGui.IsItemClicked())
@@ -175,6 +174,10 @@ internal static class OverlayWidgets
         ImGui.AlignTextToFramePadding();
 
         if (info == null)
+        {
+            MutedText("Hidden Profile");
+        }
+        else if (info.NotFound)
         {
             MutedText("Hidden Profile");
         }
@@ -200,15 +203,22 @@ internal static class OverlayWidgets
         {
             ImGui.TextColored(s.Warning, $"Best: {info.BestPercent:F0}%");
         }
+        else if (info.ActivityHidden)
+        {
+            MutedText("Activity Hidden");
+        }
+        else if (info.LookupFailed)
+        {
+            MutedText("Lookup Failed");
+        }
         else
         {
-            MutedText("Hidden Profile");
+            MutedText("No Logs");
         }
     }
 
     public static void FFLogsCell(EncounterParseResult? result, PartyMemberInfo member)
     {
-        var s = M3.Scheme;
         ImGui.AlignTextToFramePadding();
 
         if (result is null || !result.HasData)
@@ -258,7 +268,7 @@ internal static class OverlayWidgets
         }
         else if (result.LowestBossHpPct.HasValue)
         {
-            ImGui.TextColored(s.Warning, $"{result.LowestBossHpPct.Value:F0}%");
+            DrawBestPull(string.Empty, result.LowestBossHpPct.Value);
         }
         else
         {
@@ -296,6 +306,10 @@ internal static class OverlayWidgets
         {
             ImGui.TextColored(ParseColor(p1.Value), $"P1 {p1.Value:F0}%");
         }
+        else if (result.Phase1LowestBossHpPct.HasValue)
+        {
+            DrawBestPull("P1 ", result.Phase1LowestBossHpPct.Value);
+        }
         else
         {
             MutedText("P1 No logs");
@@ -305,7 +319,7 @@ internal static class OverlayWidgets
 
         if (result.Phase2LowestBossHpPct.HasValue)
         {
-            ImGui.TextColored(s.Warning, $"P2 {result.Phase2LowestBossHpPct.Value:F0}%");
+            DrawBestPull("P2 ", result.Phase2LowestBossHpPct.Value);
         }
         else if (p2.HasValue)
         {
@@ -314,6 +328,15 @@ internal static class OverlayWidgets
         else
         {
             MutedText("P2 No logs");
+        }
+    }
+
+    private static void DrawBestPull(string prefix, double fightPercentLeft)
+    {
+        ImGui.TextColored(M3.Scheme.Warning, $"{prefix}Best pull {fightPercentLeft:F1}% left");
+        if (ImGui.IsItemHovered())
+        {
+            M3Tooltip.Show("No kill yet. Their furthest wipe in their 10 most recent FFLogs reports, by how much of the fight was left.");
         }
     }
 
