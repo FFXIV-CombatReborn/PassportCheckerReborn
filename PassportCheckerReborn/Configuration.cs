@@ -14,12 +14,14 @@ public enum PartyListOverlayPosition
 }
 
 [Serializable]
-public class Configuration : IPluginConfiguration
+public class Configuration : IPluginConfiguration, IM3Settings
 {
+    public static readonly Vector4 DefaultKnownPlayerBorderColor = new(0.2f, 0.8f, 0.2f, 1.0f);
+
     public int Version { get; set; } = 1;
 
     public bool SpecialBorderColorForKnownPlayers { get; set; } = false;
-    public Vector4 KnownPlayerBorderColor { get; set; } = new Vector4(0.2f, 0.8f, 0.2f, 1.0f);
+    public Vector4 KnownPlayerBorderColor { get; set; } = DefaultKnownPlayerBorderColor;
     public bool ShowPartyJobIcons { get; set; } = true;
     public bool PreventAutoClosingOnPartyChanges2 { get; set; } = false;
 
@@ -49,9 +51,10 @@ public class Configuration : IPluginConfiguration
     public string FFLogsClientId { get; set; } = string.Empty;
     public string FFLogsClientSecret { get; set; } = string.Empty;
 
-    public Vector4 UiAccentColor { get; set; } = UI.M3.DefaultSeed;
+    public Vector4 UiAccentColor { get; set; } = M3.DefaultSeed;
     public float UiTextScale { get; set; } = 1f;
     public float UiElementScale { get; set; } = 1f;
+    public float UiPaddingScale { get; set; } = 1f;
 
     // Methods rather than properties, so they are not written to the config file.
     public bool HasFFLogsCredentials()

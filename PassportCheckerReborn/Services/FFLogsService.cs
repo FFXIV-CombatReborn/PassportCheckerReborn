@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PassportCheckerReborn.Services;
@@ -14,6 +16,7 @@ public sealed class FFLogsService : IDisposable
 {
     private const string TokenUrl = "https://www.fflogs.com/oauth/token";
     private const string ApiUrl = "https://www.fflogs.com/api/v2/client";
+    private const int MaxConcurrentRequests = 3;
 
     private const int DifficultyNormal = 100;
     private const int DifficultySavage = 101;
@@ -110,17 +113,23 @@ public sealed class FFLogsService : IDisposable
         "Bismarck", "Ravana", "Sephirot", "Sophia", "Zurvan",
     };
 
+    private static readonly TimeSpan ResultLifetime = TimeSpan.FromMinutes(5);
+
     private readonly PassportCheckerReborn plugin;
-    private readonly HttpClient httpClient;
+    private readonly ApiHttpClient http = new(MaxConcurrentRequests);
+    private readonly SemaphoreSlim tokenLock = new(1, 1);
+
+    // Keyed by job too, since the current job's best parse is picked out of the rankings.
+    private readonly ExpiringCache<(string Name, string World, string Job, int Primary, int? Secondary), EncounterParseResult> encounterCache = new(ResultLifetime);
+    private readonly ExpiringCache<(string Name, string World), (double? Average, bool NotFound)> averageCache = new(ResultLifetime);
 
     private string? cachedToken;
-    private DateTime tokenExpiry = DateTime.MinValue;
+    private (string ClientId, string ClientSecret) tokenCredentials;
+    private DateTime tokenExpiry;
 
     public FFLogsService(PassportCheckerReborn plugin)
     {
         this.plugin = plugin;
-        httpClient = new HttpClient();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"PassportCheckerReborn/{PassportCheckerReborn.Version}");
     }
 
     // The phase entries of a multi-part duty are listed; its combined name is not.
@@ -128,7 +137,7 @@ public sealed class FFLogsService : IDisposable
 
     public void Dispose()
     {
-        httpClient.Dispose();
+        http.Dispose();
     }
 
     public static uint? GetJobIconId(string? jobAbbreviation)
@@ -155,48 +164,23 @@ public sealed class FFLogsService : IDisposable
 
     public async Task<bool> TestCredentialsAsync(string clientId, string clientSecret)
     {
-        return !string.IsNullOrWhiteSpace(clientId)
-            && !string.IsNullOrWhiteSpace(clientSecret)
-            && await FetchTokenAsync(clientId, clientSecret) is not null;
-    }
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        {
+            return false;
+        }
 
-    private async Task<string?> FetchTokenAsync(string clientId, string clientSecret)
-    {
-        // A token issued to other credentials must not outlive them.
-        cachedToken = null;
-
+        await tokenLock.WaitAsync();
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, TokenUrl);
-            var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-            request.Content = new StringContent("grant_type=client_credentials", Encoding.UTF8, "application/x-www-form-urlencoded");
-
-            using var response = await httpClient.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
-            {
-                PassportCheckerReborn.Log.Warning($"[FFLogsService] Token request failed: {(int)response.StatusCode}");
-                return null;
-            }
-
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            if (!doc.RootElement.TryGetProperty("access_token", out var tokenEl))
-            {
-                return null;
-            }
-
-            var expiresIn = doc.RootElement.TryGetProperty("expires_in", out var expEl) ? expEl.GetInt32() : 3600;
-            tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn - 60);
-            cachedToken = tokenEl.GetString();
-            return cachedToken;
+            return await FetchTokenAsync(clientId, clientSecret) is not null;
         }
-        catch (Exception ex)
+        finally
         {
-            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Exception during token fetch.");
-            return null;
+            tokenLock.Release();
         }
     }
 
+    // Parallel lookups share one token fetch. A token issued to other credentials is not reused.
     private async Task<string?> GetTokenAsync()
     {
         var cfg = plugin.Configuration;
@@ -205,20 +189,60 @@ public sealed class FFLogsService : IDisposable
             return null;
         }
 
-        if (cachedToken is not null && DateTime.UtcNow < tokenExpiry)
+        await tokenLock.WaitAsync();
+        try
         {
-            return cachedToken;
+            var credentials = (ClientId: cfg.FFLogsClientId, ClientSecret: cfg.FFLogsClientSecret);
+            return cachedToken is not null && tokenCredentials == credentials && DateTime.UtcNow < tokenExpiry
+                ? cachedToken
+                : await FetchTokenAsync(credentials.ClientId, credentials.ClientSecret);
         }
+        finally
+        {
+            tokenLock.Release();
+        }
+    }
 
-        return await FetchTokenAsync(cfg.FFLogsClientId, cfg.FFLogsClientSecret);
+    private async Task<string?> FetchTokenAsync(string clientId, string clientSecret)
+    {
+        try
+        {
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+            using var response = await http.SendAsync(() => new HttpRequestMessage(HttpMethod.Post, TokenUrl)
+            {
+                Headers = { Authorization = new AuthenticationHeaderValue("Basic", basic) },
+                Content = new StringContent("grant_type=client_credentials", Encoding.UTF8, "application/x-www-form-urlencoded"),
+            });
+
+            if (!response.IsSuccessStatusCode)
+            {
+                PassportCheckerReborn.Log.Warning($"[FFLogsService] Token request failed: {(int)response.StatusCode}");
+                return null;
+            }
+
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            if (doc.RootElement.GetStringOrNull("access_token") is not { } token)
+            {
+                return null;
+            }
+
+            tokenExpiry = DateTime.UtcNow.AddSeconds((doc.RootElement.GetNumberOrNull("expires_in") ?? 3600) - 60);
+            tokenCredentials = (clientId, clientSecret);
+            return cachedToken = token;
+        }
+        catch (Exception ex)
+        {
+            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Exception during token fetch.");
+            return null;
+        }
     }
 
     #endregion
 
     #region Queries
 
-    // The raw JSON response, or null on failure.
-    private async Task<string?> QueryAsync(string graphqlQuery)
+    // Null when the request failed or the response has no data.
+    private async Task<JsonDocument?> QueryAsync(string graphqlQuery)
     {
         var token = await GetTokenAsync();
         if (token is null)
@@ -228,18 +252,39 @@ public sealed class FFLogsService : IDisposable
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, ApiUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Content = new StringContent(JsonSerializer.Serialize(new { query = graphqlQuery }), Encoding.UTF8, "application/json");
+            var body = JsonSerializer.Serialize(new { query = graphqlQuery });
+            using var response = await http.SendAsync(() => new HttpRequestMessage(HttpMethod.Post, ApiUrl)
+            {
+                Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
 
-            using var response = await httpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    Interlocked.CompareExchange(ref cachedToken, null, token);
+                }
+
                 PassportCheckerReborn.Log.Warning($"[FFLogsService] GraphQL request failed: {(int)response.StatusCode}");
                 return null;
             }
 
-            return await response.Content.ReadAsStringAsync();
+            var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            var hasErrors = doc.RootElement.TryGetPath(out var errors, "errors");
+            if (doc.RootElement.TryGetPath(out _, "data"))
+            {
+                if (hasErrors)
+                {
+                    PassportCheckerReborn.Log.Debug($"[FFLogsService] GraphQL errors: {errors.GetRawText()}");
+                }
+
+                return doc;
+            }
+
+            PassportCheckerReborn.Log.Warning($"[FFLogsService] GraphQL query returned no data: {(hasErrors ? errors.GetRawText() : "no errors given")}");
+            doc.Dispose();
+            return null;
         }
         catch (Exception ex)
         {
@@ -248,61 +293,122 @@ public sealed class FFLogsService : IDisposable
         }
     }
 
-    // A player's overall standing in the current zone, for duties with no encounter mapping.
-    public async Task<EncounterParseResult> GetOverallParseAsync(string playerName, string worldName)
+    // Each player's overall standing in the current zone, for duties with no encounter mapping.
+    public async Task<Dictionary<int, EncounterParseResult>> GetOverallParsesAsync(IReadOnlyList<PartyMemberInfo> members)
     {
-        var average = await GetBestPerfAvgAsync(playerName, worldName);
-        return new EncounterParseResult(average.HasValue, false, 0, average, null, null);
-    }
-
-    public async Task<double?> GetBestPerfAvgAsync(string playerName, string worldName)
-    {
-        if (GetFFLogsServer(worldName) is not { } server)
+        var averages = await GetZoneAveragesAsync(members, Enumerable.Range(0, members.Count));
+        var results = new Dictionary<int, EncounterParseResult>();
+        for (var i = 0; i < members.Count; i++)
         {
-            return null;
+            var (average, notFound) = averages.GetValueOrDefault(i);
+            results[i] = notFound ? EncounterParseResult.NotFound : new EncounterParseResult(average.HasValue, false, 0, average, null, null);
         }
 
-        var json = await QueryAsync($"{{ characterData {{ {CharacterSelector(playerName, server)} {{ zoneRankings }} }} }}");
-        if (json is null)
+        return results;
+    }
+
+    // Best performance averages in the current zone, by member index.
+    public async Task<Dictionary<int, double?>> GetOverallAveragesAsync(IReadOnlyList<PartyMemberInfo> members, IEnumerable<int> indices)
+    {
+        var averages = await GetZoneAveragesAsync(members, indices);
+        return averages.ToDictionary(pair => pair.Key, pair => pair.Value.Average);
+    }
+
+    private async Task<Dictionary<int, (double? Average, bool NotFound)>> GetZoneAveragesAsync(IReadOnlyList<PartyMemberInfo> members, IEnumerable<int> indices)
+    {
+        var results = new Dictionary<int, (double? Average, bool NotFound)>();
+        var pending = new List<int>();
+        foreach (var i in indices)
         {
-            return null;
+            if (averageCache.TryGet((members[i].Name, members[i].World), out var cached))
+            {
+                results[i] = cached;
+            }
+            else
+            {
+                pending.Add(i);
+            }
+        }
+
+        var selectors = BuildCharacterSelectors(members, pending);
+        if (selectors.Count == 0)
+        {
+            return results;
         }
 
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            if (!TryGetPath(doc.RootElement, out var rankings, "data", "characterData", "character", "zoneRankings"))
+            using var doc = await QueryAsync(BuildCharacterQuery(selectors, "zoneRankings"));
+            if (doc is null || !doc.RootElement.TryGetPath(out var characters, "data", "characterData"))
             {
-                return null;
+                return results;
             }
 
-            return TryGetNumber(rankings, "bestPerformanceAverage") ?? TryGetNumber(rankings, "medianPerformanceAverage");
+            foreach (var i in selectors.Keys)
+            {
+                (double? Average, bool NotFound) standing = (null, true);
+                if (characters.TryGetPath(out var character, $"p{i}"))
+                {
+                    standing = character.TryGetPath(out var rankings, "zoneRankings")
+                        ? (rankings.GetNumberOrNull("bestPerformanceAverage") ?? rankings.GetNumberOrNull("medianPerformanceAverage"), false)
+                        : (null, false);
+                }
+
+                results[i] = standing;
+                averageCache.Set((members[i].Name, members[i].World), standing);
+            }
         }
         catch (Exception ex)
         {
             PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Failed to parse zone rankings response.");
-            return null;
         }
+
+        return results;
     }
 
     // One result per member, by index. A two-part duty is looked up per part and combined.
     public async Task<Dictionary<int, EncounterParseResult>> GetEncounterDataAsync(
         IReadOnlyList<PartyMemberInfo> members, (int Primary, int? Secondary) encounterIds)
     {
-        var phase1 = await GetEncounterDataAsync(members, encounterIds.Primary);
-        if (encounterIds.Secondary is not { } secondary)
-        {
-            return phase1;
-        }
-
-        var phase2 = await GetEncounterDataAsync(members, secondary);
-        var combined = new Dictionary<int, EncounterParseResult>();
+        var results = new Dictionary<int, EncounterParseResult>();
+        var pending = new List<int>();
         for (var i = 0; i < members.Count; i++)
         {
-            combined[i] = Combine(phase1[i], phase2[i]);
+            if (encounterCache.TryGet(EncounterKey(members[i], encounterIds), out var cached))
+            {
+                results[i] = cached;
+            }
+            else
+            {
+                results[i] = EncounterParseResult.NoLogs;
+                pending.Add(i);
+            }
         }
 
-        return combined;
+        int[] ids = encounterIds.Secondary is { } secondary ? [encounterIds.Primary, secondary] : [encounterIds.Primary];
+        try
+        {
+            foreach (var (i, parts) in await FetchEncounterResultsAsync(members, pending, ids))
+            {
+                var phase1 = parts[0] ?? EncounterParseResult.NoLogs;
+                results[i] = parts.Length == 1 || phase1.CharacterNotFound ? phase1 : Combine(phase1, parts[1] ?? EncounterParseResult.NoLogs);
+                if (Array.TrueForAll(parts, part => part is not null))
+                {
+                    encounterCache.Set(EncounterKey(members[i], encounterIds), results[i]);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Failed to parse encounter rankings response.");
+        }
+
+        return results;
+    }
+
+    private static (string, string, string, int, int?) EncounterKey(PartyMemberInfo member, (int Primary, int? Secondary) encounterIds)
+    {
+        return (member.Name, member.World, member.JobAbbreviation, encounterIds.Primary, encounterIds.Secondary);
     }
 
     private static EncounterParseResult Combine(EncounterParseResult phase1, EncounterParseResult phase2)
@@ -322,6 +428,7 @@ public sealed class FFLogsService : IDisposable
         {
             Phase1BestParse = phase1.BestParse,
             Phase2BestParse = phase2.BestParse,
+            Phase1LowestBossHpPct = phase1.LowestBossHpPct,
             Phase2LowestBossHpPct = phase2.LowestBossHpPct,
             Phase1TotalKills = phase1.TotalKills,
             Phase2TotalKills = phase2.TotalKills,
@@ -331,65 +438,66 @@ public sealed class FFLogsService : IDisposable
         };
     }
 
-    // Rankings for everyone in one query, then, for those with no kill, how far their recent logs got.
-    private async Task<Dictionary<int, EncounterParseResult>> GetEncounterDataAsync(IReadOnlyList<PartyMemberInfo> members, int encounterId)
+    // Every encounter's rankings for everyone in one query, then, for those with no kill, how far their
+    // recent logs got. Indexed by member, then encounter; null where a request failed, so it is not cached.
+    private async Task<Dictionary<int, EncounterParseResult?[]>> FetchEncounterResultsAsync(
+        IReadOnlyList<PartyMemberInfo> members, IEnumerable<int> indices, int[] encounterIds)
     {
-        var results = new Dictionary<int, EncounterParseResult>();
-        for (var i = 0; i < members.Count; i++)
-        {
-            results[i] = EncounterParseResult.NoLogs;
-        }
-
-        var selectors = BuildCharacterSelectors(members, Enumerable.Range(0, members.Count));
+        var results = new Dictionary<int, EncounterParseResult?[]>();
+        var selectors = BuildCharacterSelectors(members, indices);
         if (selectors.Count == 0)
         {
             return results;
         }
 
-        var difficulty = DifficultyByEncounter.TryGetValue(encounterId, out var value) ? $", difficulty: {value}" : string.Empty;
-        var json = await QueryAsync(BuildCharacterQuery(selectors, $"encounterRankings(encounterID: {encounterId}{difficulty})"));
-        if (json is null)
+        var fields = string.Join(" ", encounterIds.Select((id, e) => DifficultyByEncounter.TryGetValue(id, out var difficulty)
+            ? $"e{e}: encounterRankings(encounterID: {id}, difficulty: {difficulty})"
+            : $"e{e}: encounterRankings(encounterID: {id})"));
+        using var doc = await QueryAsync(BuildCharacterQuery(selectors, fields));
+        if (doc is null || !doc.RootElement.TryGetPath(out var characters, "data", "characterData"))
         {
             return results;
         }
 
-        var noKillIndices = new List<int>();
-        try
+        var noKills = new List<(int Member, int Encounter)>();
+        foreach (var i in selectors.Keys)
         {
-            using var doc = JsonDocument.Parse(json);
-            if (!TryGetPath(doc.RootElement, out var characters, "data", "characterData"))
+            var parts = results[i] = new EncounterParseResult?[encounterIds.Length];
+            if (!characters.TryGetPath(out var character, $"p{i}"))
             {
-                PassportCheckerReborn.Log.Warning("[FFLogsService] Encounter batch response missing data/characterData.");
-                return results;
+                Array.Fill(parts, EncounterParseResult.NotFound);
+                continue;
             }
 
-            foreach (var i in selectors.Keys)
+            for (var e = 0; e < encounterIds.Length; e++)
             {
-                if (!TryGetPath(characters, out var rankings, $"p{i}", "encounterRankings"))
+                parts[e] = EncounterParseResult.NoLogs;
+                if (!character.TryGetPath(out var rankings, $"e{e}"))
                 {
                     continue;
                 }
 
-                var totalKills = (int)(TryGetNumber(rankings, "totalKills") ?? 0);
+                var totalKills = (int)(rankings.GetNumberOrNull("totalKills") ?? 0);
                 if (totalKills > 0)
                 {
-                    results[i] = ParseRankings(rankings, totalKills, members[i].JobAbbreviation);
+                    parts[e] = ParseRankings(rankings, totalKills, members[i].JobAbbreviation);
                 }
                 else
                 {
-                    noKillIndices.Add(i);
+                    noKills.Add((i, e));
                 }
             }
         }
-        catch (Exception ex)
-        {
-            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Failed to parse encounter rankings batch response.");
-            return results;
-        }
 
-        if (noKillIndices.Count > 0)
+        if (noKills.Count > 0)
         {
-            await FetchProgressionDataAsync(members, encounterId, noKillIndices, results);
+            var lowest = await FetchLowestFightPercentAsync(members, noKills, encounterIds);
+            foreach (var (i, e) in noKills)
+            {
+                results[i][e] = lowest is null ? null
+                    : lowest.TryGetValue((i, e), out var percent) ? new EncounterParseResult(true, true, 0, null, percent, null)
+                    : EncounterParseResult.NoLogs;
+            }
         }
 
         return results;
@@ -402,16 +510,16 @@ public sealed class FFLogsService : IDisposable
         double? currentJobBest = null;
         var currentSpec = SpecByJob.GetValueOrDefault(jobAbbreviation);
 
-        if (TryGetPath(rankings, out var ranks, "ranks") && ranks.ValueKind == JsonValueKind.Array)
+        if (rankings.TryGetPath(out var ranks, "ranks") && ranks.ValueKind == JsonValueKind.Array)
         {
             foreach (var rank in ranks.EnumerateArray())
             {
-                if (TryGetNumber(rank, "rankPercent") is not { } percent)
+                if (rank.GetNumberOrNull("rankPercent") is not { } percent)
                 {
                     continue;
                 }
 
-                var spec = rank.TryGetProperty("spec", out var specEl) ? specEl.GetString() : null;
+                var spec = rank.GetStringOrNull("spec");
                 if (bestParse is null || percent > bestParse)
                 {
                     bestParse = percent;
@@ -436,118 +544,94 @@ public sealed class FFLogsService : IDisposable
         };
     }
 
-    // For players with no kill: the lowest boss HP reached across their ten most recent reports.
-    private async Task FetchProgressionDataAsync(
-        IReadOnlyList<PartyMemberInfo> members, int encounterId, List<int> noKillIndices, Dictionary<int, EncounterParseResult> results)
+    // For players with no kill: the lowest fight percentage reached across their ten most recent reports,
+    // by member and encounter. Null when a request failed.
+    private async Task<Dictionary<(int Member, int Encounter), double>?> FetchLowestFightPercentAsync(
+        IReadOnlyList<PartyMemberInfo> members, List<(int Member, int Encounter)> noKills, int[] encounterIds)
     {
-        var selectors = BuildCharacterSelectors(members, noKillIndices);
-        var reportsJson = selectors.Count == 0
-            ? null
-            : await QueryAsync(BuildCharacterQuery(selectors, "recentReports(limit: 10) { data { code } }"));
-        if (reportsJson is null)
+        var selectors = BuildCharacterSelectors(members, noKills.Select(pair => pair.Member).Distinct());
+        using var reportsDoc = await QueryAsync(BuildCharacterQuery(selectors, "recentReports(limit: 10) { data { code } }"));
+        if (reportsDoc is null || !reportsDoc.RootElement.TryGetPath(out var characters, "data", "characterData"))
         {
-            return;
+            return null;
         }
 
         // Report code to the players who appear in it.
         var playersByReport = new Dictionary<string, List<int>>();
-        try
+        foreach (var i in selectors.Keys)
         {
-            using var doc = JsonDocument.Parse(reportsJson);
-            if (TryGetPath(doc.RootElement, out var characters, "data", "characterData"))
+            if (!characters.TryGetPath(out var reports, $"p{i}", "recentReports", "data") || reports.ValueKind != JsonValueKind.Array)
             {
-                foreach (var i in selectors.Keys)
+                continue;
+            }
+
+            foreach (var report in reports.EnumerateArray())
+            {
+                if (report.GetStringOrNull("code") is not { Length: > 0 } code)
                 {
-                    if (!TryGetPath(characters, out var reports, $"p{i}", "recentReports", "data") || reports.ValueKind != JsonValueKind.Array)
-                    {
-                        continue;
-                    }
-
-                    foreach (var report in reports.EnumerateArray())
-                    {
-                        var code = report.TryGetProperty("code", out var codeEl) ? codeEl.GetString() : null;
-                        if (string.IsNullOrEmpty(code))
-                        {
-                            continue;
-                        }
-
-                        if (!playersByReport.TryGetValue(code, out var players))
-                        {
-                            playersByReport[code] = players = [];
-                        }
-
-                        players.Add(i);
-                    }
+                    continue;
                 }
+
+                if (!playersByReport.TryGetValue(code, out var players))
+                {
+                    playersByReport[code] = players = [];
+                }
+
+                players.Add(i);
             }
         }
-        catch (Exception ex)
-        {
-            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Failed to parse recent reports response.");
-        }
 
+        var lowest = new Dictionary<(int Member, int Encounter), double>();
         if (playersByReport.Count == 0)
         {
-            return;
+            return lowest;
         }
 
+        var wanted = noKills.Select(pair => pair.Encounter).Distinct().ToArray();
+        var fightFields = string.Join(" ", wanted.Select(e => $"f{e}: fights(encounterID: {encounterIds[e]}) {{ kill fightPercentage }}"));
         var reportCodes = playersByReport.Keys.ToList();
-        var fightQuery = string.Join(" ", reportCodes.Select((code, index) =>
-            $@"r{index}: report(code: ""{EscapeGraphQL(code)}"") {{ fights(encounterID: {encounterId}) {{ kill percentage }} }}"));
-        var fightJson = await QueryAsync($"{{ reportData {{ {fightQuery} }} }}");
-        if (fightJson is null)
+        var reportQuery = string.Join(" ", reportCodes.Select((code, r) => $@"r{r}: report(code: ""{EscapeGraphQL(code)}"") {{ {fightFields} }}"));
+        using var fightsDoc = await QueryAsync($"{{ reportData {{ {reportQuery} }} }}");
+        if (fightsDoc is null || !fightsDoc.RootElement.TryGetPath(out var reportData, "data", "reportData"))
         {
-            return;
+            return null;
         }
 
-        try
+        var noKillSet = noKills.ToHashSet();
+        for (var r = 0; r < reportCodes.Count; r++)
         {
-            using var doc = JsonDocument.Parse(fightJson);
-            if (!TryGetPath(doc.RootElement, out var reportData, "data", "reportData"))
+            foreach (var e in wanted)
             {
-                return;
-            }
-
-            var lowestHp = new Dictionary<int, double>();
-            for (var index = 0; index < reportCodes.Count; index++)
-            {
-                if (!TryGetPath(reportData, out var fights, $"r{index}", "fights") || fights.ValueKind != JsonValueKind.Array)
+                if (!reportData.TryGetPath(out var fights, $"r{r}", $"f{e}") || fights.ValueKind != JsonValueKind.Array)
                 {
                     continue;
                 }
 
                 foreach (var fight in fights.EnumerateArray())
                 {
-                    // Only wipes say how far the boss got.
-                    if (fight.TryGetProperty("kill", out var killEl) && killEl.ValueKind == JsonValueKind.True)
+                    // Only wipes say how far the fight got.
+                    if (fight.TryGetPath(out var kill, "kill") && kill.ValueKind == JsonValueKind.True)
                     {
                         continue;
                     }
 
-                    if (TryGetNumber(fight, "percentage") is not { } percent)
+                    if (fight.GetNumberOrNull("fightPercentage") is not { } percent)
                     {
                         continue;
                     }
 
-                    foreach (var player in playersByReport[reportCodes[index]])
+                    foreach (var i in playersByReport[reportCodes[r]])
                     {
-                        if (!lowestHp.TryGetValue(player, out var current) || percent < current)
+                        if (noKillSet.Contains((i, e)) && (!lowest.TryGetValue((i, e), out var current) || percent < current))
                         {
-                            lowestHp[player] = percent;
+                            lowest[(i, e)] = percent;
                         }
                     }
                 }
             }
+        }
 
-            foreach (var (player, percent) in lowestHp)
-            {
-                results[player] = new EncounterParseResult(true, true, 0, null, percent, null);
-            }
-        }
-        catch (Exception ex)
-        {
-            PassportCheckerReborn.Log.Warning(ex, "[FFLogsService] Failed to parse fight percentages response.");
-        }
+        return lowest;
     }
 
     #endregion
@@ -600,30 +684,6 @@ public sealed class FFLogsService : IDisposable
         return input.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 
-    // False, rather than throwing, when a step of the path is missing or null.
-    private static bool TryGetPath(JsonElement element, out JsonElement result, params ReadOnlySpan<string> path)
-    {
-        result = element;
-        foreach (var name in path)
-        {
-            if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty(name, out result))
-            {
-                return false;
-            }
-        }
-
-        return result.ValueKind != JsonValueKind.Null;
-    }
-
-    private static double? TryGetNumber(JsonElement element, string name)
-    {
-        return element.ValueKind == JsonValueKind.Object
-            && element.TryGetProperty(name, out var value)
-            && value.ValueKind == JsonValueKind.Number
-            ? value.GetDouble()
-            : null;
-    }
-
     #endregion
 }
 
@@ -637,9 +697,14 @@ public record EncounterParseResult(
     double? AverageParsePercent)
 {
     public static readonly EncounterParseResult NoLogs = new(false, true, 0, null, null, null);
+    public static readonly EncounterParseResult NotFound = NoLogs with { CharacterNotFound = true };
+
+    // FFLogs has no character by this name and world.
+    public bool CharacterNotFound { get; init; }
 
     public double? Phase1BestParse { get; init; }
     public double? Phase2BestParse { get; init; }
+    public double? Phase1LowestBossHpPct { get; init; }
     public double? Phase2LowestBossHpPct { get; init; }
     public int? Phase1TotalKills { get; init; }
     public int? Phase2TotalKills { get; init; }
