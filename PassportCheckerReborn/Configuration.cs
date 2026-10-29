@@ -4,15 +4,6 @@ using System.Numerics;
 
 namespace PassportCheckerReborn;
 
-public enum PartyListOverlayPosition
-{
-    Left,
-    Right,
-    Above,
-    Below,
-    Unbound,
-}
-
 [Serializable]
 public class Configuration : IPluginConfiguration, IM3Settings
 {
@@ -56,7 +47,6 @@ public class Configuration : IPluginConfiguration, IM3Settings
     public float UiElementScale { get; set; } = 1f;
     public float UiPaddingScale { get; set; } = 1f;
 
-    // Methods rather than properties, so they are not written to the config file.
     public bool HasFFLogsCredentials()
     {
         return !string.IsNullOrEmpty(FFLogsClientId) && !string.IsNullOrEmpty(FFLogsClientSecret);
@@ -69,6 +59,6 @@ public class Configuration : IPluginConfiguration, IM3Settings
 
     public void Save()
     {
-        PassportCheckerReborn.PluginInterface.SavePluginConfig(this);
+        Plugin.PluginInterface.SavePluginConfig(this);
     }
 }
