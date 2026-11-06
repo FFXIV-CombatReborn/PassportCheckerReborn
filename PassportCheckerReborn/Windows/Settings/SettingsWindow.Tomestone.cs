@@ -35,7 +35,7 @@ public partial class SettingsWindow
         using (M3Card.Begin("tomestone_key", "API access", FontAwesomeIcon.Key,
                    subtitle: "Your Tomestone.gg access token, sent with each lookup."))
         {
-            TextFieldRow("API key", "##tomestone_api_key", "Paste your access token", ref tomestoneApiKeyInput, 256, password: true);
+            _ = M3Widgets.RowText("API key###tomestone_api_key", ref tomestoneApiKeyInput, "Paste your access token", password: true);
 
             BeginActionRow();
             if (M3Widgets.Button("##tomestone_save", "Save", M3ButtonStyle.Filled, FontAwesomeIcon.Save))
@@ -59,7 +59,7 @@ public partial class SettingsWindow
                    FontAwesomeIcon.QuestionCircle);
         if (guide.Expanded)
         {
-            if (StepRow(1, "Open your Tomestone account settings.", "##tomestone_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
+            if (StepRow(1, "Open your Tomestone account settings.", "tomestone_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
             {
                 OpenUrl(TomestoneAccountUrl);
             }

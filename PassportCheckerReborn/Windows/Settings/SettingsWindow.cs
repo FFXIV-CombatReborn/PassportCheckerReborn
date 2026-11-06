@@ -165,7 +165,7 @@ public partial class SettingsWindow : Window
             new(nameof(Page.Tomestone), "Tomestone", FontAwesomeIcon.Gem, page == Page.Tomestone,
                 "Tomestone.gg integration and API key", Badge: tomestoneNeedsSetup ? "!" : null, SeparatorAfter: true),
             new(nameof(Page.Appearance), "Appearance", FontAwesomeIcon.Palette, page == Page.Appearance,
-                "Accent color, size and spacing"),
+                "Accent color, size, spacing and animations"),
             new(nameof(Page.About), "About", FontAwesomeIcon.InfoCircle, page == Page.About,
                 "Commands, caches and links"),
         ];

@@ -58,7 +58,7 @@ public partial class SettingsWindow
 
         using (M3Card.Begin("about_caches", "Caches", FontAwesomeIcon.Database))
         {
-            ValueRow("Resolved players", "Content IDs already matched to a name and world.", plugin.CidCache.Count.ToString());
+            M3Widgets.RowValue("Resolved players", plugin.CidCache.Count.ToString(), "Content IDs already matched to a name and world.");
 
             const string clearLabel = "Clear";
             var countText = plugin.BlacklistCache.Count.ToString();
