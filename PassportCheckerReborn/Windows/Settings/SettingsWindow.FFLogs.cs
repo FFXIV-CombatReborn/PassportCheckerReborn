@@ -43,8 +43,9 @@ public partial class SettingsWindow
         using (M3Card.Begin("fflogs_client", "API client", FontAwesomeIcon.Key,
                    subtitle: "Create a client on FFLogs, then paste its ID and secret here."))
         {
-            TextFieldRow("Client ID", "##fflogs_client_id", "Paste your client ID", ref fflogsClientIdInput, 128);
-            TextFieldRow("Client secret", "##fflogs_client_secret", "Paste your client secret", ref fflogsClientSecretInput, 128, password: true);
+            _ = M3Widgets.RowText("Client ID###fflogs_client_id", ref fflogsClientIdInput, "Paste your client ID", maxLength: 128);
+            _ = M3Widgets.RowText("Client secret###fflogs_client_secret", ref fflogsClientSecretInput, "Paste your client secret",
+                maxLength: 128, password: true);
 
             var testing = fflogsTestInProgress;
             BeginActionRow();
@@ -75,14 +76,14 @@ public partial class SettingsWindow
         {
             if (guide.Expanded)
             {
-                if (StepRow(1, "Open the FFLogs API clients page.", "##fflogs_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
+                if (StepRow(1, "Open the FFLogs API clients page.", "fflogs_step_open", "Open", FontAwesomeIcon.ExternalLinkAlt))
                 {
                     OpenUrl(FFLogsClientsUrl);
                 }
 
                 StepRow(2, "Click \"Create Client\" in the top-right corner.");
-                CopyStepRow(3, $"Enter a client name, such as {FFLogsExampleClientName}.", "##fflogs_step_name", FFLogsExampleClientName);
-                CopyStepRow(4, $"Enter any redirect URL, such as {FFLogsExampleRedirectUrl}", "##fflogs_step_redirect", FFLogsExampleRedirectUrl);
+                CopyStepRow(3, $"Enter a client name, such as {FFLogsExampleClientName}.", "fflogs_step_name", FFLogsExampleClientName);
+                CopyStepRow(4, $"Enter any redirect URL, such as {FFLogsExampleRedirectUrl}", "fflogs_step_redirect", FFLogsExampleRedirectUrl);
                 StepRow(5, "Leave \"Public Client\" unchecked.");
                 StepRow(6, "Copy the generated client ID and secret into the fields above.");
                 StepRow(7, "Click Save & test to check them.");

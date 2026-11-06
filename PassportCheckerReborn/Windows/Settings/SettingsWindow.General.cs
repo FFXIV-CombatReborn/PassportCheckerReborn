@@ -74,9 +74,9 @@ public partial class SettingsWindow
             if (cfg.EnableTrueTimeBasedSorting && !timeSort.Unavailable)
             {
                 using var group = M3SubGroup.Begin();
-                var order = SegmentedRow("Order", "The Party Finder's own sort button flips it.",
-                    "time_sort_order", TimeSortSegments, cfg.TimeSortNewestFirst ? 0 : 1);
-                if (order >= 0)
+                var order = cfg.TimeSortNewestFirst ? 0 : 1;
+                if (M3Widgets.RowSegmented("Order###time_sort_order", ref order, TimeSortSegments,
+                        "The Party Finder's own sort button flips it."))
                 {
                     cfg.TimeSortNewestFirst = order == 0;
                     cfg.Save();
@@ -145,8 +145,8 @@ public partial class SettingsWindow
                 cfg.Save();
             }
 
-            if (ButtonRow("Refresh blacklist", "Re-reads your blacklist from the game and saves it.",
-                    "##blacklist_refresh", "Refresh", FontAwesomeIcon.Sync))
+            if (M3Widgets.RowButton("Refresh blacklist###blacklist_refresh", "Refresh",
+                    "Re-reads your blacklist from the game and saves it.", icon: FontAwesomeIcon.Sync))
             {
                 plugin.BlacklistMonitor.Refresh();
             }

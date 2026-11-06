@@ -46,6 +46,7 @@ public class Configuration : IPluginConfiguration, IM3Settings
     public float UiTextScale { get; set; } = 1f;
     public float UiElementScale { get; set; } = 1f;
     public float UiPaddingScale { get; set; } = 1f;
+    public float UiMotionScale { get; set; } = 1f;
 
     public bool HasFFLogsCredentials()
     {

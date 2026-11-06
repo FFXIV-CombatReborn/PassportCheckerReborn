@@ -35,9 +35,9 @@ public partial class SettingsWindow
                     cfg.Save();
                 }
 
-                var side = SegmentedRow("Side", "Which side of the listing details the overlay sits on.",
-                    "overlay_side", OverlaySideSegments, cfg.ShowOverlayOnLeftSide ? 0 : 1);
-                if (side >= 0)
+                var side = cfg.ShowOverlayOnLeftSide ? 0 : 1;
+                if (M3Widgets.RowSegmented("Side###overlay_side", ref side, OverlaySideSegments,
+                        "Which side of the listing details the overlay sits on."))
                 {
                     cfg.ShowOverlayOnLeftSide = side == 0;
                     cfg.Save();
