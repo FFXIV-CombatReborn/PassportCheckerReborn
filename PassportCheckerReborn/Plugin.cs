@@ -103,11 +103,11 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
-                HelpMessage = "Open Passport Check Reborn menu."
+                HelpMessage = "Open Passport Checker Reborn menu."
             });
             CommandManager.AddHandler(AltCommandName, new CommandInfo(OnCommand)
             {
-                HelpMessage = "Open Passport Check Reborn menu."
+                HelpMessage = "Open Passport Checker Reborn menu."
             });
             CommandManager.AddHandler(PartyListCommandName, new CommandInfo(OnPartyListCommand)
             {

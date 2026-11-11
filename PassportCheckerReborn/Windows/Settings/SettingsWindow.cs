@@ -207,7 +207,7 @@ public partial class SettingsWindow : Window
 
         if (expanded)
         {
-            const string tagline = "REBORN";
+            var tagline = $"v{Plugin.Version}";
             var textX = center.X + (badge * 0.5f) + (10f * scale);
             var textWidth = MathF.Max(16f * scale, max.X - textX - (4f * scale));
             var gap = 1f * scale;
