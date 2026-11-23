@@ -8,8 +8,11 @@ namespace PassportCheckerReborn;
 public class Configuration : IPluginConfiguration, IM3Settings
 {
     public static readonly Vector4 DefaultKnownPlayerBorderColor = new(0.2f, 0.8f, 0.2f, 1.0f);
+    public static readonly Vector4 DefaultAccentColor = M3ColorMath.FromRgb(0x024A8A);
 
-    public int Version { get; set; } = 1;
+    private const int CurrentVersion = 2;
+
+    public int Version { get; set; } = CurrentVersion;
 
     public bool SpecialBorderColorForKnownPlayers { get; set; } = false;
     public Vector4 KnownPlayerBorderColor { get; set; } = DefaultKnownPlayerBorderColor;
@@ -42,11 +45,32 @@ public class Configuration : IPluginConfiguration, IM3Settings
     public string FFLogsClientId { get; set; } = string.Empty;
     public string FFLogsClientSecret { get; set; } = string.Empty;
 
-    public Vector4 UiAccentColor { get; set; } = M3.DefaultSeed;
+    public Vector4 UiAccentColor { get; set; } = DefaultAccentColor;
     public float UiTextScale { get; set; } = 1f;
     public float UiElementScale { get; set; } = 1f;
     public float UiPaddingScale { get; set; } = 1f;
     public float UiMotionScale { get; set; } = 1f;
+    public bool UiCompactLayout { get; set; } = false;
+    public bool UiInlineDescriptions { get; set; } = true;
+    public bool UiIconSidebar { get; set; } = false;
+
+    bool IM3Settings.UiDescriptionTooltips => !UiInlineDescriptions;
+
+    public void Migrate()
+    {
+        if (Version >= CurrentVersion)
+        {
+            return;
+        }
+
+        if (UiAccentColor == M3.DefaultSeed)
+        {
+            UiAccentColor = DefaultAccentColor;
+        }
+
+        Version = CurrentVersion;
+        Save();
+    }
 
     public bool HasFFLogsCredentials()
     {

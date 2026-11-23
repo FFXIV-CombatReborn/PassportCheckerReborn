@@ -1,10 +1,9 @@
-using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
 
-public class JobFilterWindow(Plugin plugin) : Window("PF Job Filter##PFCheckerJobFilter",
+public class JobFilterWindow(Plugin plugin) : M3Window("PF Job Filter##PFCheckerJobFilter",
            ImGuiWindowFlags.NoTitleBar |
                ImGuiWindowFlags.NoResize |
                ImGuiWindowFlags.NoMove |
@@ -20,8 +19,6 @@ public class JobFilterWindow(Plugin plugin) : Window("PF Job Filter##PFCheckerJo
     private float addonHeight;
 
     private Vector2 lastWindowSize;
-
-    private M3Style.Scope? theme;
 
     public override unsafe bool DrawConditions()
     {
@@ -42,10 +39,8 @@ public class JobFilterWindow(Plugin plugin) : Window("PF Job Filter##PFCheckerJo
         return true;
     }
 
-    public override void PreDraw()
+    protected override void PreDrawThemed()
     {
-        theme = M3Style.Push(M3Density.Compact);
-
         var gap = AddonGap * M3.Scale;
         var above = addonPosition.Y - gap;
         if (above - lastWindowSize.Y >= ImGui.GetMainViewport().Pos.Y)
@@ -56,12 +51,6 @@ public class JobFilterWindow(Plugin plugin) : Window("PF Job Filter##PFCheckerJo
         {
             ImGui.SetNextWindowPos(new Vector2(addonPosition.X, addonPosition.Y + addonHeight + gap), ImGuiCond.Always);
         }
-    }
-
-    public override void PostDraw()
-    {
-        theme?.Dispose();
-        theme = null;
     }
 
     public override void Draw()

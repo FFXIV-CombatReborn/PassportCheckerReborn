@@ -40,6 +40,8 @@ public sealed class Plugin : IAsyncDalamudPlugin
     private const string AltCommandName = "/pcr";
     private const string PartyListCommandName = "/pcrparty";
 
+    private const string LogoResource = "PassportCheckerReborn.Resources.PCR_Icon.png";
+
     internal static Configuration Configuration { get; private set; } = null!;
 
     public readonly WindowSystem WindowSystem = new("PassportCheckerReborn");
@@ -69,7 +71,16 @@ public sealed class Plugin : IAsyncDalamudPlugin
     public async Task LoadAsync(CancellationToken cancellationToken)
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Configuration.Migrate();
+
+        M3.ElementBaseline = 0.75f;
         M3.Initialize(PluginInterface, Configuration);
+
+        M3Brand.Name = "Passport Checker Reborn";
+        M3Brand.Version = Version;
+        M3Brand.FallbackIcon = FontAwesomeIcon.Passport;
+        M3Brand.LogoCornerFraction = 0.047f;
+        M3Brand.SetLogoResource(typeof(Plugin).Assembly, LogoResource);
 
         TomestoneService = new TomestoneService();
         FFLogsService = new FFLogsService();
@@ -180,6 +191,7 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
     private void DrawWindows()
     {
+        M3Window.DefaultDensity = Configuration.UiCompactLayout ? M3Density.Tight : M3Density.Compact;
         M3.BeginFrame();
         WindowSystem.Draw();
     }

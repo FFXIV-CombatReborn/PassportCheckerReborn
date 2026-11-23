@@ -1,5 +1,4 @@
 using Dalamud.Interface.Utility.Raii;
-using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Integrations.FFLogs;
 using PassportCheckerReborn.Integrations.Tomestone;
@@ -10,7 +9,7 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
 
-public partial class PartyListWindow(Plugin plugin) : Window("Party Member Info##PFCheckerPartyList", LockedFlags)
+public partial class PartyListWindow(Plugin plugin) : M3Window("Party Member Info##PFCheckerPartyList", LockedFlags)
 {
     private const ImGuiWindowFlags FreeFlags = ImGuiWindowFlags.NoTitleBar
         | ImGuiWindowFlags.NoScrollbar
@@ -37,17 +36,13 @@ public partial class PartyListWindow(Plugin plugin) : Window("Party Member Info#
     private Vector2 lastWindowSize = new(310, 200);
     private float lastContentWidth;
 
-    private M3Style.Scope? theme;
-
     public override unsafe bool DrawConditions()
     {
         return plugin.PartyMonitor.Members.Count > 0 || FindPartyListAddon() != null;
     }
 
-    public override void PreDraw()
+    protected override void PreDrawThemed()
     {
-        theme = M3Style.Push(M3Density.Compact);
-
         var position = Plugin.Configuration.PartyListOverlayPosition;
         if (position == PartyListOverlayPosition.Unbound)
         {
@@ -58,12 +53,6 @@ public partial class PartyListWindow(Plugin plugin) : Window("Party Member Info#
 
         Flags = LockedFlags;
         PositionBeside(position);
-    }
-
-    public override void PostDraw()
-    {
-        theme?.Dispose();
-        theme = null;
     }
 
     private static unsafe AtkUnitBase* FindPartyListAddon()
@@ -171,7 +160,7 @@ public partial class PartyListWindow(Plugin plugin) : Window("Party Member Info#
         var headerMax = ImGui.GetItemRectMax();
         contentRight = headerMax.X;
 
-        var buttonSize = 26f * M3.Scale;
+        var buttonSize = M3.FitText(26f, 4f);
         ImGui.SameLine();
         var buttonX = MathF.Max(ImGui.GetCursorScreenPos().X, contentStartX + lastContentWidth - buttonSize);
         ImGui.SetCursorScreenPos(new Vector2(buttonX, headerMin.Y + ((headerMax.Y - headerMin.Y - buttonSize) * 0.5f)));
@@ -190,7 +179,7 @@ public partial class PartyListWindow(Plugin plugin) : Window("Party Member Info#
     private bool DrawDutySelector(out float right)
     {
         const string label = "Duty";
-        var width = 240f * M3.Scale;
+        var width = 320f * M3.Scale;
         var start = ImGui.GetCursorScreenPos();
         var labelSize = ImGui.CalcTextSize(label);
 

@@ -22,7 +22,7 @@ internal static partial class OverlayWidgets
         var s = M3.Scheme;
         var scale = M3.Scale;
         var start = ImGui.GetCursorScreenPos();
-        var iconBox = 28f * scale;
+        var iconBox = M3.FitText(28f, 5f);
         var lineGap = 1f * scale;
 
         Vector2 titleSize;
