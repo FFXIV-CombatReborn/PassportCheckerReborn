@@ -1,5 +1,4 @@
 using Dalamud.Interface.Utility.Raii;
-using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using PassportCheckerReborn.Integrations.FFLogs;
 using PassportCheckerReborn.Integrations.Tomestone;
@@ -11,7 +10,7 @@ using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
 
-public partial class MemberInfoWindow(Plugin plugin) : Window("PF Member Info##PFCheckerOverlay",
+public partial class MemberInfoWindow(Plugin plugin) : M3Window("PF Member Info##PFCheckerOverlay",
            ImGuiWindowFlags.NoTitleBar |
                ImGuiWindowFlags.NoResize |
                ImGuiWindowFlags.NoMove |
@@ -31,12 +30,8 @@ public partial class MemberInfoWindow(Plugin plugin) : Window("PF Member Info##P
 
     private Vector2 lastWindowSize = new(300f, 200f);
 
-    private M3Style.Scope? theme;
-
-    public override unsafe void PreDraw()
+    protected override unsafe void PreDrawThemed()
     {
-        theme = M3Style.Push(M3Density.Compact);
-
         var addonPtr = Plugin.GameGui.GetAddonByName("LookingForGroupDetail", 1);
         if (addonPtr.IsNull)
         {
@@ -65,12 +60,6 @@ public partial class MemberInfoWindow(Plugin plugin) : Window("PF Member Info##P
             var left = screenLeft + addon->X + addon->GetScaledWidth(true) + AddonGap;
             Position = new Vector2(MathF.Max(MathF.Min(left, screenRight - lastWindowSize.X), screenLeft), top);
         }
-    }
-
-    public override void PostDraw()
-    {
-        theme?.Dispose();
-        theme = null;
     }
 
     public override void Draw()

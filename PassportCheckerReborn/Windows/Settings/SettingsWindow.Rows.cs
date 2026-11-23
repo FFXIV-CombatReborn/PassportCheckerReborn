@@ -11,7 +11,7 @@ public partial class SettingsWindow
 
     private static Vector4 Muted => M3.Alpha(M3.Scheme.OnSurfaceVariant, 0.9f);
 
-    private static float RowInset => 12f * M3.Scale;
+    private static float RowInset => M3Style.Spacing(12f, 8f);
 
     private static void TextRow(string label, string? supporting)
     {

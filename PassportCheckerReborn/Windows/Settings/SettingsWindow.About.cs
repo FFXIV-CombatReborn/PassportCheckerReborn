@@ -7,6 +7,10 @@ public partial class SettingsWindow
 {
     private const string RepoUrl = "https://github.com/FFXIV-CombatReborn/PassportCheckerReborn";
 
+    private const string KofiLabel = "Support on Ko-fi";
+    private const string DiscordLabel = "Discord";
+    private const string RepoLabel = "Source code";
+
     private void DrawAboutPage()
     {
         var s = M3.Scheme;
@@ -37,14 +41,22 @@ public partial class SettingsWindow
 
             ImGui.Dummy(new Vector2(0f, M3.Space2));
 
-            if (M3Widgets.Button("##about_kofi", "Support on Ko-fi", M3ButtonStyle.Tonal, FontAwesomeIcon.MugHot))
+            var flow = new M3Flow(M3.Space2, ImGui.GetContentRegionAvail().X - M3Card.RightInset);
+
+            flow.Next(M3Widgets.ButtonWidth(FontAwesomeIcon.MugHot, KofiLabel));
+            if (M3Widgets.Button("##about_kofi", KofiLabel, M3ButtonStyle.Tonal, FontAwesomeIcon.MugHot))
             {
                 OpenUrl(KofiUrl);
             }
 
-            ImGui.SameLine(0f, M3.Space2);
+            flow.Next(M3Widgets.ButtonWidth(FontAwesomeIcon.Comments, DiscordLabel));
+            if (M3Widgets.Button("##about_discord", DiscordLabel, M3ButtonStyle.Outlined, FontAwesomeIcon.Comments))
+            {
+                OpenUrl(DiscordUrl);
+            }
 
-            if (M3Widgets.Button("##about_repo", "Source code", M3ButtonStyle.Outlined, FontAwesomeIcon.CodeBranch))
+            flow.Next(M3Widgets.ButtonWidth(FontAwesomeIcon.CodeBranch, RepoLabel));
+            if (M3Widgets.Button("##about_repo", RepoLabel, M3ButtonStyle.Outlined, FontAwesomeIcon.CodeBranch))
             {
                 OpenUrl(RepoUrl);
             }

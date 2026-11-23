@@ -1,12 +1,11 @@
 using Dalamud.Interface.Utility.Raii;
-using Dalamud.Interface.Windowing;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
 
 namespace PassportCheckerReborn.Windows;
 
-public partial class SettingsWindow : Window
+public partial class SettingsWindow : M3FoldWindow
 {
     private enum Page
     {
@@ -18,26 +17,22 @@ public partial class SettingsWindow : Window
         About,
     }
 
-    private const string KofiUrl = "https://ko-fi.com/ltscombatreborn";
-    private const float DrawerLayoutWidth = 620f;
-    private const float DrawerWidth = 188f;
+    private const string BrandName = "Passport Checker";
+    private const float BrandLogoSize = 40f;
+    private const float DrawerLayoutWidth = 600f;
+    private const float DrawerMinWidth = 190f;
     private const float RailWidth = 84f;
 
     private readonly Plugin plugin;
 
-    private M3Style.Scope? theme;
     private Page page = Page.General;
 
     private bool savePending;
 
     public SettingsWindow(Plugin plugin)
-        : base("Passport Checker Reborn – Settings###PassportCheckerRebornSettings", BaseFlags)
+        : base("Passport Checker Reborn – Settings###PassportCheckerRebornSettings", "PCR", DefaultSize, DefaultSizeConstraints)
     {
         this.plugin = plugin;
-
-        Size = DefaultSize;
-        SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = DefaultSizeConstraints;
 
         AllowPinning = false;
         AllowClickthrough = false;
@@ -45,71 +40,54 @@ public partial class SettingsWindow : Window
 
     private Configuration Configuration => Plugin.Configuration;
 
+    private static float IconStripWidth => MathF.Max(44f * M3.Scale, (UiBuilder.IconFont.FontSize * 1.25f) + (8f * M3.Scale));
+
     public override void OnOpen()
     {
         IsPinned = false;
         IsClickthrough = false;
     }
 
-    public override void PreDraw()
-    {
-        theme = M3Style.Push();
-        PrepareFold();
-    }
-
-    public override void PostDraw()
-    {
-        fold.PopStyle();
-        theme?.Dispose();
-        theme = null;
-    }
-
     public override void OnClose()
     {
-        if (savePending)
-        {
-            Configuration.Save();
-            savePending = false;
-        }
+        FlushSave();
 
         M3Motion.Reset();
         M3CardHost.Reset();
 
-        fold.Reset();
+        base.OnClose();
     }
 
-    public override void Draw()
+    protected override void DrawLast()
     {
-        fold.BeginDraw();
-
-        if (fold.Amount < 1f)
+        if (!ImGui.IsAnyItemActive())
         {
-            using var alpha = ImRaii.PushStyle(ImGuiStyleVar.Alpha, fold.ContentAlpha);
-            M3Draw.WindowBackdrop(fold.Rounding);
-            DrawContent();
-        }
-
-        DrawWindowBar();
-
-        if (savePending && !ImGui.IsAnyItemActive())
-        {
-            Configuration.Save();
-            savePending = false;
+            FlushSave();
         }
     }
 
-    private void DrawContent()
+    private void FlushSave()
     {
-        using var content = fold.BeginContent("##pcr_window_content");
-        if (!content)
+        if (!savePending)
         {
             return;
         }
 
+        Configuration.Save();
+        savePending = false;
+    }
+
+    protected override void DrawOpen()
+    {
         var scale = M3.Scale;
         var available = ImGui.GetContentRegionAvail();
         var spacing = ImGui.GetStyle().ItemSpacing.X;
-        var navWidth = (available.X >= DrawerLayoutWidth * scale ? DrawerWidth : RailWidth) * scale;
+        var items = BuildNavItems();
+        var iconsOnly = Configuration.UiIconSidebar;
+        var expanded = !iconsOnly && available.X >= DrawerLayoutWidth * scale;
+        var navWidth = iconsOnly ? MathF.Min(IconStripWidth, available.X * 0.3f)
+            : expanded ? MathF.Min(DrawerWidth(items), available.X * 0.4f)
+            : MathF.Min(RailWidth * scale, available.X * 0.3f);
 
         var origin = ImGui.GetCursorScreenPos();
         var dividerX = origin.X + navWidth + (spacing * 0.5f);
@@ -118,12 +96,33 @@ public partial class SettingsWindow : Window
             new Vector2(dividerX, origin.Y + available.Y),
             M3.U32(M3.Scheme.OutlineVariant, 0.45f), 1f * scale);
 
-        DrawNavigation(navWidth);
+        DrawNavigation(items, navWidth, expanded, iconsOnly);
         ImGui.SameLine(0f, spacing);
         DrawBody();
     }
 
-    private void DrawNavigation(float width)
+    private static float DrawerWidth(List<M3NavItem> items)
+    {
+        var scale = M3.Scale;
+        var label = 0f;
+        foreach (var item in items)
+        {
+            var badge = item.Badge == null ? 0f : ImGui.CalcTextSize(item.Badge).X + (20f * scale);
+            label = MathF.Max(label, ImGui.CalcTextSize(item.Label).X + badge);
+        }
+
+        var labelWidth = label + (44f * scale) + M3Style.Spacing(16f, 12f) + M3Style.Spacing(14f, 10f);
+        var brandWidth = MeasureText(M3.TitleMedium, BrandName).X + ((BrandLogoSize + 26f) * scale);
+        return MathF.Max(DrawerMinWidth * scale, MathF.Max(labelWidth, brandWidth));
+    }
+
+    private static Vector2 MeasureText(ImFontPtr font, string text)
+    {
+        using var pushed = ImRaii.PushFont(font);
+        return ImGui.CalcTextSize(text);
+    }
+
+    private void DrawNavigation(List<M3NavItem> items, float width, bool expanded, bool iconsOnly)
     {
         using var child = ImRaii.Child("##pcr_nav", new Vector2(width, -1f), false, ImGuiWindowFlags.NoScrollbar);
         if (!child)
@@ -131,12 +130,10 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var expanded = ImGui.GetContentRegionAvail().X >= M3Navigation.DrawerBreakpoint * M3.Scale;
-
         DrawBrand(expanded);
-        ImGui.Dummy(new Vector2(0f, M3.Space2));
+        ImGui.Dummy(new Vector2(0f, M3.Space1));
 
-        var clicked = M3Navigation.Draw("pcr_nav", BuildNavItems(), expanded);
+        var clicked = M3Navigation.Draw("pcr_nav", items, expanded, iconsOnly);
         if (clicked != null && Enum.TryParse<Page>(clicked, out var target))
         {
             page = target;
@@ -165,7 +162,7 @@ public partial class SettingsWindow : Window
             new(nameof(Page.Tomestone), "Tomestone", FontAwesomeIcon.Gem, page == Page.Tomestone,
                 "Tomestone.gg integration and API key", Badge: tomestoneNeedsSetup ? "!" : null, SeparatorAfter: true),
             new(nameof(Page.Appearance), "Appearance", FontAwesomeIcon.Palette, page == Page.Appearance,
-                "Accent color, size, spacing and animations"),
+                "Accent color, sizes, spacing, animations and layout"),
             new(nameof(Page.About), "About", FontAwesomeIcon.InfoCircle, page == Page.About,
                 "Commands, caches and links"),
         ];
@@ -176,8 +173,19 @@ public partial class SettingsWindow : Window
         var s = M3.Scheme;
         var scale = M3.Scale;
         var width = MathF.Max(1f, ImGui.GetContentRegionAvail().X);
-        var badge = 40f * scale;
-        var height = badge + (8f * scale);
+        var logoSize = MathF.Min(BrandLogoSize * scale, width);
+        var height = logoSize + (8f * scale);
+
+        var gap = 1f * scale;
+        var tagline = $"v{Plugin.Version}";
+        var nameHeight = 0f;
+        var textHeight = 0f;
+        if (expanded)
+        {
+            nameHeight = MeasureText(M3.TitleMedium, BrandName).Y;
+            textHeight = nameHeight + gap + MeasureText(M3.LabelSmall, tagline).Y;
+            height = MathF.Max(height, textHeight + (4f * scale));
+        }
 
         var pressed = ImGui.InvisibleButton("##pcr_brand", new Vector2(width, height));
         var hovered = ImGui.IsItemHovered();
@@ -191,50 +199,22 @@ public partial class SettingsWindow : Window
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
         }
 
-        var center = expanded
-            ? new Vector2(min.X + (8f * scale) + (badge * 0.5f), min.Y + (height * 0.5f))
-            : new Vector2(min.X + (width * 0.5f), min.Y + (height * 0.5f));
-        var half = new Vector2(badge * 0.5f);
-        if (Logo is { } logo)
-        {
-            drawList.AddImage(logo.Handle, center - half, center + half, Vector2.Zero, Vector2.One, M3.U32(Vector4.One));
-        }
-        else
-        {
-            drawList.AddCircleFilled(center, badge * 0.5f, M3.U32(s.PrimaryContainer), 32);
-            M3Draw.IconCentered(drawList, FontAwesomeIcon.Passport, center - half, center + half, s.OnPrimaryContainer);
-        }
+        var logoX = expanded ? min.X + (8f * scale) : min.X + ((width - logoSize) * 0.5f);
+        M3Brand.DrawLogo(drawList, new Vector2(logoX, min.Y + ((height - logoSize) * 0.5f)), logoSize);
 
         if (expanded)
         {
-            var tagline = $"v{Plugin.Version}";
-            var textX = center.X + (badge * 0.5f) + (10f * scale);
+            var textX = logoX + logoSize + (10f * scale);
             var textWidth = MathF.Max(16f * scale, max.X - textX - (4f * scale));
-            var gap = 1f * scale;
-
-            string name;
-            Vector2 nameSize;
+            var textTop = min.Y + ((height - textHeight) * 0.5f);
             using (ImRaii.PushFont(M3.TitleMedium))
             {
-                name = M3Navigation.Truncate("Passport Checker", textWidth);
-                nameSize = ImGui.CalcTextSize(name);
-            }
-
-            Vector2 taglineSize;
-            using (ImRaii.PushFont(M3.LabelSmall))
-            {
-                taglineSize = ImGui.CalcTextSize(tagline);
-            }
-
-            var textTop = min.Y + ((height - nameSize.Y - gap - taglineSize.Y) * 0.5f);
-            using (ImRaii.PushFont(M3.TitleMedium))
-            {
-                drawList.AddText(new Vector2(textX, textTop), M3.U32(s.OnSurface, 0.98f), name);
+                drawList.AddText(new Vector2(textX, textTop), M3.U32(s.OnSurface, 0.98f), M3Navigation.Truncate(BrandName, textWidth));
             }
 
             using (ImRaii.PushFont(M3.LabelSmall))
             {
-                drawList.AddText(new Vector2(textX, textTop + nameSize.Y + gap), M3.U32(s.Primary), tagline);
+                drawList.AddText(new Vector2(textX, textTop + nameHeight + gap), M3.U32(s.Primary), tagline);
             }
         }
 
@@ -314,7 +294,6 @@ public partial class SettingsWindow : Window
     {
         var (title, subtitle) = PageHeading(page);
         using var bar = M3TopAppBar.Begin(title, subtitle, WindowActions.Length, Brand);
-        shownActions = bar.ShownActions;
-        fold.BarTop = bar.BarTop;
+        SetActionBar(bar.ShownActions, bar.BarTop);
     }
 }
